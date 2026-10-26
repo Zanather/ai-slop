@@ -40,6 +40,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
@@ -184,7 +185,7 @@ private fun AllFieldsToggle(count: Int, expanded: Boolean, onToggle: () -> Unit)
         Column(Modifier.weight(1f)) {
             Text(stringResource(R.string.info_all_fields), style = MaterialTheme.typography.titleMedium)
             Text(
-                text = stringResource(R.string.info_all_fields_count, count),
+                text = pluralStringResource(R.plurals.info_all_fields_count, count, count),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

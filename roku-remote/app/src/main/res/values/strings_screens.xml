@@ -33,7 +33,6 @@
     <string name="devices_more">More options</string>
     <string name="devices_forget">Forget</string>
     <string name="devices_add">Add</string>
-    <string name="devices_new">New</string>
     <string name="devices_kind_tv">Roku TV</string>
     <string name="devices_kind_player">Streaming player</string>
     <string name="devices_add_by_ip">Add by IP address</string>
@@ -49,7 +48,10 @@
     <string name="info_error_title">Can\'t read TV details</string>
     <string name="info_no_details">The TV didn\'t report anything about itself.</string>
     <string name="info_all_fields">All fields</string>
-    <string name="info_all_fields_count">%1$d fields the TV reports</string>
+    <plurals name="info_all_fields_count">
+        <item quantity="one">%1$d field the TV reports</item>
+        <item quantity="other">%1$d fields the TV reports</item>
+    </plurals>
     <string name="info_show_all">Show all fields</string>
     <string name="info_hide_all">Hide all fields</string>
 
