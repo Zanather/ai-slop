@@ -64,7 +64,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun connectsOnForegroundAndLoadsTheTv() = runBlocking {
+    fun connectsOnForegroundAndLoadsTheTv() = runBlocking<Unit> {
         saveTv()
         val session = session()
         session.onForeground()
@@ -77,7 +77,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun staysQuietInTheBackground() = runBlocking {
+    fun staysQuietInTheBackground() = runBlocking<Unit> {
         saveTv()
         val session = session()
         session.awaitState { it.device != null }
@@ -88,7 +88,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun limitedModeBlocksThenClearsItselfWhenTheSettingChanges() = runBlocking {
+    fun limitedModeBlocksThenClearsItselfWhenTheSettingChanges() = runBlocking<Unit> {
         roku.ecpMode = "limited"
         saveTv()
         val session = session()
@@ -102,7 +102,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun aRejectedKeyOnOlderFirmwareBlocksAndAnAcceptedKeyUnblocks() = runBlocking {
+    fun aRejectedKeyOnOlderFirmwareBlocksAndAnAcceptedKeyUnblocks() = runBlocking<Unit> {
         roku.ecpMode = null
         roku.rejectKeys = true
         val session = connected()
@@ -117,7 +117,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun pressesArriveInOrder() = runBlocking {
+    fun pressesArriveInOrder() = runBlocking<Unit> {
         val session = connected()
 
         listOf(RemoteKey.Down, RemoteKey.Down, RemoteKey.Right, RemoteKey.Select).forEach(session::press)
@@ -127,7 +127,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun holdingRepeatsUntilReleasedAndStopsAfter() = runBlocking {
+    fun holdingRepeatsUntilReleasedAndStopsAfter() = runBlocking<Unit> {
         val session = connected()
 
         session.holdStart(RemoteKey.VolumeUp)
@@ -143,7 +143,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun aQuickTapOnARepeatingKeySendsExactlyOnePress() = runBlocking {
+    fun aQuickTapOnARepeatingKeySendsExactlyOnePress() = runBlocking<Unit> {
         val session = connected()
 
         session.holdStart(RemoteKey.Up)
@@ -155,7 +155,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun powerFollowsTheTvsPowerState() = runBlocking {
+    fun powerFollowsTheTvsPowerState() = runBlocking<Unit> {
         val session = connected()
 
         session.press(RemoteKey.Power)
@@ -169,7 +169,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun typedTextArrivesInOrderAndEncoded() = runBlocking {
+    fun typedTextArrivesInOrderAndEncoded() = runBlocking<Unit> {
         val session = connected()
 
         session.sendKeys(LiteralKey.of("hi you"))
@@ -182,7 +182,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun launchOptimisticallyUpdatesTheActiveApp() = runBlocking {
+    fun launchOptimisticallyUpdatesTheActiveApp() = runBlocking<Unit> {
         val session = connected()
 
         session.launch("837")
@@ -193,7 +193,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun findsTheTvAgainAfterItsAddressChanges() = runBlocking {
+    fun findsTheTvAgainAfterItsAddressChanges() = runBlocking<Unit> {
         val deadPort = deadPort()
         saveTv(port = deadPort)
         val session = session(FakeLan(ssdpReplies = listOf(ssdpReply(server.port, roku.serial))))
@@ -204,7 +204,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun ignoresAnotherRokuThatAnswersDiscovery() = runBlocking {
+    fun ignoresAnotherRokuThatAnswersDiscovery() = runBlocking<Unit> {
         saveTv(port = deadPort(), serial = "SOMEONE-ELSE")
         val session = session(FakeLan(ssdpReplies = listOf(ssdpReply(server.port, roku.serial))))
         session.onForeground()
@@ -214,7 +214,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun wakeSendsMagicPacketsThenGivesUp() = runBlocking {
+    fun wakeSendsMagicPacketsThenGivesUp() = runBlocking<Unit> {
         saveTv(port = deadPort())
         val lan = FakeLan()
         val session = session(lan)
@@ -233,7 +233,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun powerWhileTheTvIsMissingWakesInsteadOfSendingAKey() = runBlocking {
+    fun powerWhileTheTvIsMissingWakesInsteadOfSendingAKey() = runBlocking<Unit> {
         saveTv(port = deadPort())
         val lan = FakeLan()
         val session = session(lan)
@@ -246,7 +246,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun widgetPressWorksWithoutTheAppInTheForeground() = runBlocking {
+    fun widgetPressWorksWithoutTheAppInTheForeground() = runBlocking<Unit> {
         saveTv()
         val session = session()
 
@@ -255,7 +255,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun widgetPowerTogglesFromTheLiveState() = runBlocking {
+    fun widgetPowerTogglesFromTheLiveState() = runBlocking<Unit> {
         saveTv()
         val session = session()
 
@@ -264,7 +264,7 @@ class RokuSessionTest {
     }
 
     @Test
-    fun choosingADiscoveredTvSavesAndSelectsIt() = runBlocking {
+    fun choosingADiscoveredTvSavesAndSelectsIt() = runBlocking<Unit> {
         val session = session()
         val found = session.probe("127.0.0.1") // nothing on :8060 here
         assertThat(found).isNull()

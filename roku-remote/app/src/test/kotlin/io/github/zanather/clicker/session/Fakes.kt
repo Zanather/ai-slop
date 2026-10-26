@@ -28,13 +28,15 @@ class FakeRoku(
     /** Reject keys with Roku's Limited-mode 403 even when [ecpMode] doesn't say so (older firmware). */
     @Volatile var rejectKeys = false
 
+    @Volatile var activeAppId = "12"
+
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.url.encodedPath
         val limited = ecpMode == "limited" || rejectKeys
         return when {
             path == "/query/device-info" -> xml(deviceInfo())
             path == "/query/apps" -> if (limited) limitedMode() else xml(APPS)
-            path == "/query/active-app" -> xml("""<active-app><app id="12" type="appl" version="5.1">Netflix</app></active-app>""")
+            path == "/query/active-app" -> xml("<active-app>${APP_XML.getValue(activeAppId)}</active-app>")
             path.startsWith("/keypress/") && request.method == "POST" -> {
                 if (limited) {
                     limitedMode()
@@ -49,7 +51,9 @@ class FakeRoku(
                 }
             }
             path.startsWith("/launch/") && request.method == "POST" -> {
-                launches += path.removePrefix("/launch/")
+                val id = path.removePrefix("/launch/")
+                launches += id
+                if (id in APP_XML) activeAppId = id
                 MockResponse(code = 204)
             }
             else -> MockResponse(code = 404)
@@ -81,12 +85,13 @@ class FakeRoku(
     private fun limitedMode() = MockResponse(code = 403, body = "ECP command not allowed in Limited mode.")
 
     companion object {
-        const val APPS = """<apps>
-            <app id="tvinput.hdmi1" type="tvin" version="1.0.0">HDMI 1</app>
-            <app id="tvinput.dtv" type="tvin" version="1.0.0">Live TV</app>
-            <app id="12" type="appl" version="5.1">Netflix</app>
-            <app id="837" type="appl" version="2.1">YouTube</app>
-        </apps>"""
+        val APP_XML = linkedMapOf(
+            "tvinput.hdmi1" to """<app id="tvinput.hdmi1" type="tvin" version="1.0.0">HDMI 1</app>""",
+            "tvinput.dtv" to """<app id="tvinput.dtv" type="tvin" version="1.0.0">Live TV</app>""",
+            "12" to """<app id="12" type="appl" version="5.1">Netflix</app>""",
+            "837" to """<app id="837" type="appl" version="2.1">YouTube</app>""",
+        )
+        val APPS = "<apps>${APP_XML.values.joinToString("")}</apps>"
     }
 }
 

@@ -256,21 +256,22 @@ internal fun SessionState.toAppsUiState(ecp: EcpClient): AppsUiState {
 }
 
 internal fun DeviceInfo.toInfoUiState(host: String): DeviceInfoUiState {
+    // Same order as the TV's own System Info screen, so things are where people expect them.
     val rows = buildList {
         add("Name" to name)
-        modelName?.let { add("Model" to it) }
         modelNumber?.let { add("Model number" to it) }
-        vendorName?.let { add("Made by" to it) }
         add("Software version" to listOfNotNull(softwareVersion, softwareBuild).joinToString(" build "))
-        add("Serial number" to serialNumber)
         deviceId?.let { add("Device ID" to it) }
-        add("IP address" to host)
-        networkType?.let { add("Connection" to if (it == "ethernet") "Ethernet" else "Wi-Fi") }
         wifiMac?.takeIf { it.isNotBlank() }?.let { add("Wi-Fi MAC" to it) }
         ethernetMac?.takeIf { it.isNotBlank() }?.let { add("Ethernet MAC" to it) }
+        add("IP address" to host)
+        add("Serial number" to serialNumber)
+        uptimeSeconds?.let { add("Uptime" to formatUptime(it)) }
+        modelName?.let { add("Model" to it) }
+        vendorName?.let { add("Made by" to it) }
+        networkType?.let { add("Connection" to if (it == "ethernet") "Ethernet" else "Wi-Fi") }
         add("Power" to powerMode.label())
         add("Control by mobile apps" to ecpMode.label())
-        uptimeSeconds?.let { add("Uptime" to formatUptime(it)) }
         val shown = setOf(
             "user-device-name", "friendly-device-name", "default-device-name", "model-name", "model-number", "vendor-name",
             "software-version", "software-build", "serial-number", "device-id", "network-type", "wifi-mac", "ethernet-mac",

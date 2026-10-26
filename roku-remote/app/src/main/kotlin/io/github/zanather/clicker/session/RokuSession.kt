@@ -219,11 +219,14 @@ class RokuSession(
     }
 
     fun launch(appId: String) {
-        val app = _state.value.apps.firstOrNull { it.id == appId }
         queue.offer {
             val device = _state.value.device ?: return@offer
             ecp.launch(device.address, appId)
-            if (app != null) _state.update { it.copy(activeApp = ActiveApp(app, null)) }
+            // Show it as playing now; the next poll confirms what the TV actually opened.
+            _state.update { s ->
+                val app = s.apps.firstOrNull { it.id == appId } ?: RokuApp(appId, appId, null, null)
+                s.copy(activeApp = ActiveApp(app, null))
+            }
             settleThen { refreshActiveApp() }
         }
     }
@@ -235,7 +238,11 @@ class RokuSession(
     suspend fun pressFromOutside(key: RemoteKey): Boolean {
         val device = store.state.first().selected ?: return false
         val resolved = if (key == RemoteKey.Power) {
-            val info = runCatching { ecp.deviceInfo(device.address) }.getOrNull()
+            val info = try {
+                ecp.deviceInfo(device.address)
+            } catch (_: EcpException) {
+                null
+            }
             if (info == null) {
                 sendWakePackets(device)
                 RemoteKey.PowerOn
@@ -326,7 +333,11 @@ class RokuSession(
                 sendWakePackets(device)
                 val start = TimeSource.Monotonic.markNow()
                 while (start.elapsedNow() < timing.wakeTimeout) {
-                    runCatching { ecp.keypress(device.address, RemoteKey.PowerOn) }
+                    try {
+                        ecp.keypress(device.address, RemoteKey.PowerOn)
+                    } catch (_: EcpException) {
+                        // Expected while it's still asleep.
+                    }
                     val info = try {
                         ecp.deviceInfo(device.address)
                     } catch (_: EcpException) {
@@ -347,17 +358,25 @@ class RokuSession(
     private suspend fun sendWakePackets(device: SavedDevice) {
         if (device.wakeMacs.isEmpty()) return
         withContext(Dispatchers.IO) {
-            runCatching {
+            try {
                 lan.openDatagramSocket().use { socket ->
                     repeat(3) {
                         for (mac in device.wakeMacs) {
                             for (target in lan.broadcastAddresses()) {
-                                runCatching { WakeOnLan.send(mac, target, socket) }
+                                try {
+                                    WakeOnLan.send(mac, target, socket)
+                                } catch (_: IOException) {
+                                    // One unreachable broadcast address shouldn't stop the others.
+                                } catch (_: IllegalArgumentException) {
+                                    // A malformed saved MAC; the other one may still work.
+                                }
                             }
                         }
                         delay(250.milliseconds)
                     }
                 }
+            } catch (_: IOException) {
+                // No UDP socket (e.g. Wi-Fi off); PowerOn below may still reach a TV in standby.
             }
         }
     }
