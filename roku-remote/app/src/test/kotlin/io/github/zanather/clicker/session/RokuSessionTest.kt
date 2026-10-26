@@ -1,0 +1,313 @@
+package io.github.zanather.clicker.session
+
+import androidx.datastore.preferences.core.PreferenceDataStoreFactory
+import com.google.common.truth.Truth.assertThat
+import io.github.zanather.clicker.data.DeviceStore
+import io.github.zanather.clicker.data.SavedDevice
+import io.github.zanather.clicker.ecp.EcpClient
+import io.github.zanather.clicker.ecp.LiteralKey
+import io.github.zanather.clicker.ecp.RemoteKey
+import io.github.zanather.clicker.ecp.RokuAddress
+import io.github.zanather.clicker.net.Lan
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import mockwebserver3.MockWebServer
+import org.junit.After
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.rules.TemporaryFolder
+import java.io.File
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+
+class RokuSessionTest {
+    @get:Rule
+    val tmp = TemporaryFolder()
+
+    private val roku = FakeRoku()
+    private val server = MockWebServer()
+    private lateinit var scope: CoroutineScope
+    private lateinit var store: DeviceStore
+
+    private val timing = SessionTiming(
+        pollInterval = 150.milliseconds,
+        infoEveryTicks = 2,
+        holdDelay = 150.milliseconds,
+        holdInterval = 40.milliseconds,
+        volumeHoldInterval = 40.milliseconds,
+        literalGap = 1.milliseconds,
+        ssdpTimeout = 500.milliseconds,
+        wakeTimeout = 1.seconds,
+        settleDelay = 50.milliseconds,
+    )
+
+    @Before
+    fun setUp() {
+        server.dispatcher = roku
+        server.start()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        store = DeviceStore(PreferenceDataStoreFactory.create(scope = scope) { File(tmp.root, "test.preferences_pb") })
+    }
+
+    @After
+    fun tearDown() {
+        scope.cancel()
+        server.close()
+    }
+
+    @Test
+    fun connectsOnForegroundAndLoadsTheTv() = runBlocking {
+        saveTv()
+        val session = session()
+        session.onForeground()
+
+        val state = session.awaitState { it.link == Link.Connected && it.apps.isNotEmpty() && it.activeApp != null }
+
+        assertThat(state.info?.name).isEqualTo("Living Room TV")
+        assertThat(state.apps.map { it.id }).containsExactly("tvinput.hdmi1", "tvinput.dtv", "12", "837").inOrder()
+        assertThat(state.activeApp?.app?.name).isEqualTo("Netflix")
+    }
+
+    @Test
+    fun staysQuietInTheBackground() = runBlocking {
+        saveTv()
+        val session = session()
+        session.awaitState { it.device != null }
+        delay(300)
+
+        assertThat(session.state.value.link).isEqualTo(Link.Connecting)
+        assertThat(server.requestCount).isEqualTo(0)
+    }
+
+    @Test
+    fun limitedModeBlocksThenClearsItselfWhenTheSettingChanges() = runBlocking {
+        roku.ecpMode = "limited"
+        saveTv()
+        val session = session()
+        session.onForeground()
+
+        session.awaitState { it.link == Link.Blocked(limitedMode = true) }
+        assertThat(session.awaitState { it.appsError != null }.appsError).isEqualTo(AppsError.Blocked)
+
+        roku.ecpMode = "enabled"
+        session.awaitState { it.link == Link.Connected }
+    }
+
+    @Test
+    fun aRejectedKeyOnOlderFirmwareBlocksAndAnAcceptedKeyUnblocks() = runBlocking {
+        roku.ecpMode = null
+        roku.rejectKeys = true
+        val session = connected()
+
+        session.press(RemoteKey.Home)
+        session.awaitState { it.link == Link.Blocked(limitedMode = true) }
+
+        roku.rejectKeys = false
+        session.press(RemoteKey.Home)
+        session.awaitState { it.link == Link.Connected }
+        assertThat(roku.keys).containsExactly("Home")
+    }
+
+    @Test
+    fun pressesArriveInOrder() = runBlocking {
+        val session = connected()
+
+        listOf(RemoteKey.Down, RemoteKey.Down, RemoteKey.Right, RemoteKey.Select).forEach(session::press)
+
+        awaitKeys(4)
+        assertThat(roku.keys).containsExactly("Down", "Down", "Right", "Select").inOrder()
+    }
+
+    @Test
+    fun holdingRepeatsUntilReleasedAndStopsAfter() = runBlocking {
+        val session = connected()
+
+        session.holdStart(RemoteKey.VolumeUp)
+        delay(400)
+        session.holdEnd(RemoteKey.VolumeUp)
+        delay(100)
+        val afterRelease = roku.keys.size
+        delay(300)
+
+        assertThat(afterRelease).isAtLeast(3)
+        assertThat(roku.keys.toSet()).containsExactly("VolumeUp")
+        assertThat(roku.keys.size).isEqualTo(afterRelease)
+    }
+
+    @Test
+    fun aQuickTapOnARepeatingKeySendsExactlyOnePress() = runBlocking {
+        val session = connected()
+
+        session.holdStart(RemoteKey.Up)
+        delay(30)
+        session.holdEnd(RemoteKey.Up)
+        delay(400)
+
+        assertThat(roku.keys).containsExactly("Up")
+    }
+
+    @Test
+    fun powerFollowsTheTvsPowerState() = runBlocking {
+        val session = connected()
+
+        session.press(RemoteKey.Power)
+        awaitKeys(1)
+        assertThat(roku.keys.last()).isEqualTo("PowerOff")
+
+        session.awaitState { it.info?.powerMode?.isScreenOn == false }
+        session.press(RemoteKey.Power)
+        awaitKeys(2)
+        assertThat(roku.keys.last()).isEqualTo("PowerOn")
+    }
+
+    @Test
+    fun typedTextArrivesInOrderAndEncoded() = runBlocking {
+        val session = connected()
+
+        session.sendKeys(LiteralKey.of("hi you"))
+        session.sendKeys(listOf(RemoteKey.Backspace) + LiteralKey.of("!"))
+
+        awaitKeys(8)
+        assertThat(roku.keys).containsExactly(
+            "Lit_h", "Lit_i", "Lit_%20", "Lit_y", "Lit_o", "Lit_u", "Backspace", "Lit_%21",
+        ).inOrder()
+    }
+
+    @Test
+    fun launchOptimisticallyUpdatesTheActiveApp() = runBlocking {
+        val session = connected()
+
+        session.launch("837")
+
+        session.awaitState { it.activeApp?.app?.id == "837" }
+        withTimeout(2.seconds) { while (roku.launches.isEmpty()) delay(10) }
+        assertThat(roku.launches).containsExactly("837")
+    }
+
+    @Test
+    fun findsTheTvAgainAfterItsAddressChanges() = runBlocking {
+        val deadPort = deadPort()
+        saveTv(port = deadPort)
+        val session = session(FakeLan(ssdpReplies = listOf(ssdpReply(server.port, roku.serial))))
+        session.onForeground()
+
+        session.awaitState { it.link == Link.Connected && it.device?.port == server.port }
+        assertThat(store.state.first().selected?.port).isEqualTo(server.port)
+    }
+
+    @Test
+    fun ignoresAnotherRokuThatAnswersDiscovery() = runBlocking {
+        saveTv(port = deadPort(), serial = "SOMEONE-ELSE")
+        val session = session(FakeLan(ssdpReplies = listOf(ssdpReply(server.port, roku.serial))))
+        session.onForeground()
+
+        session.awaitState { it.link == Link.Unreachable }
+        assertThat(store.state.first().selected?.port).isNotEqualTo(server.port)
+    }
+
+    @Test
+    fun wakeSendsMagicPacketsThenGivesUp() = runBlocking {
+        saveTv(port = deadPort())
+        val lan = FakeLan()
+        val session = session(lan)
+        session.onForeground()
+        session.awaitState { it.link == Link.Unreachable }
+
+        session.wake()
+        session.awaitState { it.link == Link.Waking }
+        session.awaitState(5.seconds) { it.link == Link.Unreachable }
+
+        val magic = lan.sent.filter { it.length == 102 }
+        assertThat(magic).isNotEmpty()
+        assertThat(magic.first().data.copyOfRange(0, 6).all { it == 0xFF.toByte() }).isTrue()
+        assertThat(magic.first().data.copyOfRange(6, 12).map { it.toInt() and 0xFF })
+            .containsExactly(0x64, 0xE0, 0x03, 0xD4, 0x56, 0x41).inOrder()
+    }
+
+    @Test
+    fun powerWhileTheTvIsMissingWakesInsteadOfSendingAKey() = runBlocking {
+        saveTv(port = deadPort())
+        val lan = FakeLan()
+        val session = session(lan)
+        session.onForeground()
+        session.awaitState { it.link == Link.Unreachable }
+
+        session.press(RemoteKey.Power)
+
+        session.awaitState { it.link == Link.Waking }
+    }
+
+    @Test
+    fun widgetPressWorksWithoutTheAppInTheForeground() = runBlocking {
+        saveTv()
+        val session = session()
+
+        assertThat(session.pressFromOutside(RemoteKey.Play)).isTrue()
+        assertThat(roku.keys).containsExactly("Play")
+    }
+
+    @Test
+    fun widgetPowerTogglesFromTheLiveState() = runBlocking {
+        saveTv()
+        val session = session()
+
+        assertThat(session.pressFromOutside(RemoteKey.Power)).isTrue()
+        assertThat(roku.keys).containsExactly("PowerOff")
+    }
+
+    @Test
+    fun choosingADiscoveredTvSavesAndSelectsIt() = runBlocking {
+        val session = session()
+        val found = session.probe("127.0.0.1") // nothing on :8060 here
+        assertThat(found).isNull()
+
+        val address = RokuAddress("127.0.0.1", server.port)
+        session.choose(FoundRoku(address, EcpClient(EcpClient.defaultHttpClient()).deviceInfo(address)))
+
+        val saved = store.state.first().selected
+        assertThat(saved?.serialNumber).isEqualTo(roku.serial)
+        assertThat(saved?.name).isEqualTo("Living Room TV")
+        assertThat(saved?.wakeMacs).containsExactly("64:e0:03:d4:56:41")
+    }
+
+    // region helpers
+
+    private fun session(lan: Lan = FakeLan()) = RokuSession(scope, EcpClient(EcpClient.defaultHttpClient()), store, lan, timing)
+
+    private suspend fun connected(): RokuSession {
+        saveTv()
+        return session().also {
+            it.onForeground()
+            it.awaitState { s -> s.info != null && s.link != Link.Connecting }
+        }
+    }
+
+    private suspend fun saveTv(port: Int = server.port, serial: String = roku.serial) {
+        store.upsert(SavedDevice(serial, "TV", "127.0.0.1", port, isTv = true, wakeMacs = listOf("64:e0:03:d4:56:41")))
+        store.select(serial)
+    }
+
+    private suspend fun RokuSession.awaitState(timeout: Duration = 5.seconds, predicate: (SessionState) -> Boolean): SessionState =
+        withTimeout(timeout) { state.first(predicate) }
+
+    private suspend fun awaitKeys(count: Int) = withTimeout(3.seconds) {
+        while (roku.keys.size < count) delay(10)
+    }
+
+    private fun deadPort(): Int = MockWebServer().run {
+        start()
+        val port = this.port
+        close()
+        port
+    }
+
+    // endregion
+}

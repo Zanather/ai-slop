@@ -85,8 +85,9 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         }
     }
 
-    suspend fun updateHost(serialNumber: String, host: String) = editDevices { devices ->
-        devices.map { if (it.serialNumber == serialNumber) it.copy(host = host) else it }
+    /** The TV moved (new DHCP lease); keep everything else. */
+    suspend fun updateAddress(serialNumber: String, host: String, port: Int) = editDevices { devices ->
+        devices.map { if (it.serialNumber == serialNumber) it.copy(host = host, port = port) else it }
     }
 
     suspend fun setFavorites(serialNumber: String, favorites: List<String>) = editDevices { devices ->

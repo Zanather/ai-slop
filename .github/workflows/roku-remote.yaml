@@ -1,0 +1,50 @@
+name: Roku Remote CI
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/roku-remote.yaml
+      - roku-remote/**
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/roku-remote.yaml
+      - roku-remote/**
+  workflow_dispatch:
+
+defaults:
+  run:
+    working-directory: roku-remote
+
+jobs:
+  build:
+    permissions:
+      contents: read
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v6
+
+      - run: ./gradlew :ecp:test :app:testDebugUnitTest :app:lintDebug :app:assembleRelease
+
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: reports
+          path: |
+            roku-remote/*/build/reports/
+            roku-remote/*/build/test-results/
+
+      - run: cp app/build/outputs/apk/release/app-release.apk clicker.apk
+      # Unzipped so it can be downloaded straight to a phone and installed.
+      - uses: actions/upload-artifact@v7
+        with:
+          path: roku-remote/clicker.apk
+          archive: false

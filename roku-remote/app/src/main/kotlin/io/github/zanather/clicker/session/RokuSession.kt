@@ -369,7 +369,7 @@ class RokuSession(
         when {
             found == null -> _state.update { it.copy(link = Link.Unreachable) }
             // Saving the new address re-triggers connect() through the store collector.
-            found.address != device.address -> store.updateHost(device.serialNumber, found.address.host)
+            found.address != device.address -> store.updateAddress(device.serialNumber, found.address.host, found.address.port)
             else -> onInfo(device, found.info)
         }
     }
