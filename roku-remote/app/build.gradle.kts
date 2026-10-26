@@ -54,6 +54,10 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            all {
+                // Robolectric's SDK 36 sandbox pokes at FileDescriptor internals that JDK 17+ hides.
+                it.jvmArgs("--add-exports=java.base/jdk.internal.access=ALL-UNNAMED", "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED")
+            }
         }
     }
 }
@@ -92,4 +96,9 @@ dependencies {
     testImplementation(libs.roborazzi.junit.rule)
     testImplementation(libs.robolectric)
     testImplementation(libs.truth)
+}
+
+roborazzi {
+    // Golden screenshots live next to the tests and are committed, so UI changes show up in review.
+    outputDir.set(file("src/test/screenshots"))
 }
