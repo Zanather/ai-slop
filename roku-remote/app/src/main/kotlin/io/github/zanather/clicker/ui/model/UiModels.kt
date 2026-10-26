@@ -18,6 +18,9 @@ sealed interface ConnectionStatus {
     /** Reachable, screen off. Power turns it on. */
     data object TvOff : ConnectionStatus
 
+    /** Sent Wake-on-LAN and PowerOn; waiting up to ~20 s for the TV to answer. */
+    data object Waking : ConnectionStatus
+
     /** Not answering anywhere. [canWake] when a MAC is known for Wake-on-LAN. */
     data class Unreachable(val canWake: Boolean) : ConnectionStatus
 
@@ -67,8 +70,11 @@ interface RemoteActions {
 
     fun launch(appId: String)
 
-    /** Characters the user added in the keyboard sheet, sent in order. */
-    fun typeText(text: String)
+    /**
+     * Keys from the keyboard sheet, sent in order without dropping any. The sheet computes them with
+     * [io.github.zanather.clicker.ecp.keysForEdit] so edits anywhere in the field are mirrored on the TV.
+     */
+    fun sendKeys(keys: List<RokuKey>)
 
     fun wake()
 
@@ -82,7 +88,7 @@ interface RemoteActions {
         override fun holdStart(key: RokuKey) = Unit
         override fun holdEnd(key: RokuKey) = Unit
         override fun launch(appId: String) = Unit
-        override fun typeText(text: String) = Unit
+        override fun sendKeys(keys: List<RokuKey>) = Unit
         override fun wake() = Unit
         override fun retry() = Unit
         override fun setTouchpadMode(enabled: Boolean) = Unit

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Roku's control protocol is plain HTTP on the LAN (port 8060), and the TV's IP is whatever DHCP gives it,
+     so cleartext can't be scoped to a domain. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

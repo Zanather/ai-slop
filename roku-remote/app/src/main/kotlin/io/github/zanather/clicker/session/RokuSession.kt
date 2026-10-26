@@ -1,0 +1,565 @@
+package io.github.zanather.clicker.session
+
+import io.github.zanather.clicker.data.DeviceStore
+import io.github.zanather.clicker.data.SavedDevice
+import io.github.zanather.clicker.ecp.ActiveApp
+import io.github.zanather.clicker.ecp.CommandQueue
+import io.github.zanather.clicker.ecp.DeviceInfo
+import io.github.zanather.clicker.ecp.EcpClient
+import io.github.zanather.clicker.ecp.EcpException
+import io.github.zanather.clicker.ecp.EcpMode
+import io.github.zanather.clicker.ecp.LiteralKey
+import io.github.zanather.clicker.ecp.PowerMode
+import io.github.zanather.clicker.ecp.RemoteKey
+import io.github.zanather.clicker.ecp.RokuAddress
+import io.github.zanather.clicker.ecp.RokuApp
+import io.github.zanather.clicker.ecp.RokuKey
+import io.github.zanather.clicker.ecp.SsdpDiscovery
+import io.github.zanather.clicker.ecp.SubnetScanner
+import io.github.zanather.clicker.ecp.WakeOnLan
+import io.github.zanather.clicker.net.Lan
+import java.io.IOException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.firstOrNull
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
+import kotlin.time.TimeSource
+
+/** The session's view of the link to the selected TV. */
+sealed interface Link {
+    data object NoDevice : Link
+    data object Connecting : Link
+    data object Connected : Link
+
+    /** Lost the TV at its saved address; scanning for its serial number. */
+    data object Searching : Link
+
+    /** Sent Wake-on-LAN and PowerOn; waiting for the TV to answer. */
+    data object Waking : Link
+
+    data object Unreachable : Link
+
+    /** The TV refuses keys until its "Control by mobile apps" setting changes. */
+    data class Blocked(val limitedMode: Boolean) : Link
+}
+
+/** Why the channel list is empty. */
+enum class AppsError {
+    /** Limited mode blocks `/query/apps`. */
+    Blocked,
+    Failed,
+}
+
+data class SessionState(
+    val device: SavedDevice? = null,
+    val link: Link = Link.NoDevice,
+    val info: DeviceInfo? = null,
+    val apps: List<RokuApp> = emptyList(),
+    val appsLoading: Boolean = false,
+    val appsError: AppsError? = null,
+    val activeApp: ActiveApp? = null,
+)
+
+/** Delays the session uses; shortened in tests. */
+data class SessionTiming(
+    /** Under Roku's ~5 s idle-socket cutoff, so the pooled connection stays warm for the next press. */
+    val pollInterval: Duration = 4.seconds,
+    /** Device-info refresh cadence, in poll ticks. Active-app is polled on the other ticks. */
+    val infoEveryTicks: Int = 3,
+    val holdDelay: Duration = 400.milliseconds,
+    val holdInterval: Duration = 90.milliseconds,
+    val volumeHoldInterval: Duration = 60.milliseconds,
+    /** On-screen keyboards drop characters that arrive faster than they redraw. */
+    val literalGap: Duration = 30.milliseconds,
+    val ssdpTimeout: Duration = 3.seconds,
+    val wakeTimeout: Duration = 20.seconds,
+    val settleDelay: Duration = 1500.milliseconds,
+)
+
+/** A Roku found while scanning. */
+data class FoundRoku(val address: RokuAddress, val info: DeviceInfo)
+
+/**
+ * Owns the connection to the selected TV: connects, re-finds it when its IP changes, wakes it, polls it
+ * while the app is visible, and sends keys in order.
+ *
+ * Thread-safe: UI calls arrive on the main thread; work runs on [scope].
+ */
+class RokuSession(
+    private val scope: CoroutineScope,
+    private val ecp: EcpClient,
+    private val store: DeviceStore,
+    private val lan: Lan,
+    private val timing: SessionTiming = SessionTiming(),
+) {
+    private val _state = MutableStateFlow(SessionState())
+    val state: StateFlow<SessionState> = _state.asStateFlow()
+
+    private val queue = CommandQueue(scope, onFailure = ::onCommandFailure)
+    private val typing = Channel<List<RokuKey>>(Channel.UNLIMITED)
+
+    private val lock = Any()
+
+    @Volatile
+    private var foreground = false
+    private var connectJob: Job? = null
+    private var pollJob: Job? = null
+    private var holdJob: Job? = null
+    private var settleJob: Job? = null
+
+    init {
+        scope.launch {
+            var last: SavedDevice? = null
+            store.state.collect { stored ->
+                val device = stored.selected
+                val moved = device?.serialNumber != last?.serialNumber || device?.address != last?.address
+                last = device
+                if (moved) onDeviceChanged(device) else _state.update { it.copy(device = device) }
+            }
+        }
+        scope.launch {
+            for (keys in typing) {
+                for (key in keys) {
+                    try {
+                        queue.run { send(key) }
+                    } catch (_: EcpException) {
+                        break
+                    }
+                    if (key is LiteralKey) delay(timing.literalGap)
+                }
+            }
+        }
+    }
+
+    // region Lifecycle
+
+    /** The app is visible: reconnect if needed and keep the connection warm. */
+    fun onForeground() {
+        synchronized(lock) { foreground = true }
+        when (_state.value.link) {
+            Link.Connected, is Link.Blocked -> {
+                startPolling()
+                scope.launch { refreshInfo() }
+            }
+            Link.NoDevice, Link.Waking -> Unit
+            else -> connect()
+        }
+    }
+
+    /** The app is hidden: stop polling and any held key so nothing runs in the background. */
+    fun onBackground() {
+        synchronized(lock) {
+            foreground = false
+            pollJob?.cancel()
+            holdJob?.cancel()
+            if (_state.value.link == Link.Searching || _state.value.link == Link.Connecting) connectJob?.cancel()
+        }
+    }
+
+    // endregion
+
+    // region Keys
+
+    /** One tap. [RemoteKey.Power] becomes PowerOn/PowerOff from the TV's power state, or a wake-up if it's gone. */
+    fun press(key: RokuKey) {
+        if (key == RemoteKey.Power && _state.value.link.tvMissing) {
+            wake()
+            return
+        }
+        val resolved = resolvePower(key)
+        queue.offer { send(resolved) }
+    }
+
+    /** Finger down on a repeating key: press now, then repeat after [SessionTiming.holdDelay] until [holdEnd]. */
+    fun holdStart(key: RokuKey) {
+        synchronized(lock) {
+            holdJob?.cancel()
+            holdJob = scope.launch {
+                val interval = if (key == RemoteKey.VolumeUp || key == RemoteKey.VolumeDown) timing.volumeHoldInterval else timing.holdInterval
+                try {
+                    queue.run { send(key) }
+                    delay(timing.holdDelay)
+                    while (isActive) {
+                        queue.run { send(key) }
+                        delay(interval)
+                    }
+                } catch (_: EcpException) {
+                    // Already reported through onCommandFailure; stop repeating into a dead link.
+                }
+            }
+        }
+    }
+
+    fun holdEnd(@Suppress("UNUSED_PARAMETER") key: RokuKey) {
+        synchronized(lock) {
+            holdJob?.cancel()
+            holdJob = null
+        }
+    }
+
+    /** Keyboard keys: never dropped, always in order, paced for on-screen keyboards. */
+    fun sendKeys(keys: List<RokuKey>) {
+        if (keys.isNotEmpty()) typing.trySend(keys)
+    }
+
+    fun launch(appId: String) {
+        val app = _state.value.apps.firstOrNull { it.id == appId }
+        queue.offer {
+            val device = _state.value.device ?: return@offer
+            ecp.launch(device.address, appId)
+            if (app != null) _state.update { it.copy(activeApp = ActiveApp(app, null)) }
+            settleThen { refreshActiveApp() }
+        }
+    }
+
+    /**
+     * For the widget and Quick Settings tile, which can run before any UI exists. Reads the device straight
+     * from storage and waits for the press to land, so it finishes inside the caller's short lifecycle.
+     */
+    suspend fun pressFromOutside(key: RemoteKey): Boolean {
+        val device = store.state.first().selected ?: return false
+        val resolved = if (key == RemoteKey.Power) {
+            val info = runCatching { ecp.deviceInfo(device.address) }.getOrNull()
+            if (info == null) {
+                sendWakePackets(device)
+                RemoteKey.PowerOn
+            } else if (info.powerMode.isScreenOn) {
+                RemoteKey.PowerOff
+            } else {
+                RemoteKey.PowerOn
+            }
+        } else {
+            key
+        }
+        return withTimeoutOrNull(6.seconds) {
+            try {
+                queue.run { ecp.keypress(device.address, resolved) }
+                true
+            } catch (_: EcpException) {
+                false
+            }
+        } ?: false
+    }
+
+    private suspend fun send(key: RokuKey) {
+        val device = _state.value.device ?: return
+        ecp.keypress(device.address, key)
+        onKeyAccepted(key)
+    }
+
+    private fun resolvePower(key: RokuKey): RokuKey {
+        if (key != RemoteKey.Power) return key
+        val mode = _state.value.info?.powerMode ?: return key
+        return when {
+            mode == PowerMode.Unknown -> key
+            mode.isScreenOn -> RemoteKey.PowerOff
+            else -> RemoteKey.PowerOn
+        }
+    }
+
+    private fun onKeyAccepted(key: RokuKey) {
+        // A key got through, so whatever blocked us is fixed.
+        if (_state.value.link is Link.Blocked) {
+            _state.update { it.copy(link = Link.Connected) }
+            scope.launch { refreshApps() }
+        }
+        when (key) {
+            RemoteKey.PowerOn, RemoteKey.PowerOff, RemoteKey.Power -> settleThen { refreshInfo() }
+            RemoteKey.Home, RemoteKey.Back, RemoteKey.Select -> settleThen { refreshActiveApp() }
+            else -> Unit
+        }
+    }
+
+    private fun onCommandFailure(e: EcpException) {
+        when (e) {
+            is EcpException.Forbidden -> _state.update { it.copy(link = Link.Blocked(e.limitedMode)) }
+            is EcpException.Unreachable, is EcpException.Timeout -> connect()
+            is EcpException.Http, is EcpException.BadResponse -> Unit
+        }
+    }
+
+    // endregion
+
+    // region Connection
+
+    /** Probes the saved address; if the TV isn't there, looks for it on the network. */
+    fun connect() {
+        synchronized(lock) {
+            if (connectJob?.isActive == true) return
+            val device = _state.value.device ?: return
+            connectJob = scope.launch {
+                if (_state.value.link != Link.Connected) _state.update { it.copy(link = Link.Connecting) }
+                try {
+                    onInfo(device, ecp.deviceInfo(device.address))
+                } catch (e: EcpException.Forbidden) {
+                    _state.update { it.copy(link = Link.Blocked(e.limitedMode)) }
+                } catch (_: EcpException) {
+                    relocate(device)
+                }
+            }
+        }
+    }
+
+    /** Wake-on-LAN, then PowerOn until the TV answers or [SessionTiming.wakeTimeout] passes. */
+    fun wake() {
+        val device = _state.value.device ?: return
+        synchronized(lock) {
+            connectJob?.cancel()
+            connectJob = scope.launch {
+                _state.update { it.copy(link = Link.Waking) }
+                sendWakePackets(device)
+                val start = TimeSource.Monotonic.markNow()
+                while (start.elapsedNow() < timing.wakeTimeout) {
+                    runCatching { ecp.keypress(device.address, RemoteKey.PowerOn) }
+                    val info = try {
+                        ecp.deviceInfo(device.address)
+                    } catch (_: EcpException) {
+                        null
+                    }
+                    if (info != null) {
+                        onInfo(device, info)
+                        // Blocked TVs ignore PowerOn; the banner explains the fix, so stop retrying.
+                        if (info.powerMode.isScreenOn || _state.value.link is Link.Blocked) return@launch
+                    }
+                    delay(1.seconds)
+                }
+                if (_state.value.info == null || _state.value.link == Link.Waking) relocate(device)
+            }
+        }
+    }
+
+    private suspend fun sendWakePackets(device: SavedDevice) {
+        if (device.wakeMacs.isEmpty()) return
+        withContext(Dispatchers.IO) {
+            runCatching {
+                lan.openDatagramSocket().use { socket ->
+                    repeat(3) {
+                        for (mac in device.wakeMacs) {
+                            for (target in lan.broadcastAddresses()) {
+                                runCatching { WakeOnLan.send(mac, target, socket) }
+                            }
+                        }
+                        delay(250.milliseconds)
+                    }
+                }
+            }
+        }
+    }
+
+    /** The TV stopped answering at its saved address. Find it by serial and save the new address. */
+    private suspend fun relocate(device: SavedDevice) {
+        _state.update { it.copy(link = Link.Searching) }
+        val found = discover(exhaustive = true).firstOrNull { it.info.serialNumber == device.serialNumber }
+        when {
+            found == null -> _state.update { it.copy(link = Link.Unreachable) }
+            // Saving the new address re-triggers connect() through the store collector.
+            found.address != device.address -> store.updateHost(device.serialNumber, found.address.host)
+            else -> onInfo(device, found.info)
+        }
+    }
+
+    private suspend fun onInfo(device: SavedDevice, info: DeviceInfo) {
+        if (info.serialNumber != device.serialNumber) {
+            // Something else now owns this IP; the real TV moved.
+            relocate(device)
+            return
+        }
+        val link = when (info.ecpMode) {
+            EcpMode.Limited -> Link.Blocked(limitedMode = true)
+            EcpMode.Disabled -> Link.Blocked(limitedMode = false)
+            EcpMode.Enabled, EcpMode.Permissive -> Link.Connected
+            // Older firmware doesn't report the mode; only a 403 or an accepted key tells us.
+            EcpMode.Unknown -> _state.value.link as? Link.Blocked ?: Link.Connected
+        }
+        val wasConnected = _state.value.info != null && _state.value.link == Link.Connected
+        _state.update { it.copy(info = info, link = link) }
+
+        val refreshed = device.copy(
+            name = info.name,
+            isTv = info.isTv,
+            wakeMacs = info.wakeMacs.ifEmpty { device.wakeMacs },
+        )
+        if (refreshed != device) store.upsert(refreshed)
+
+        if (!wasConnected) {
+            scope.launch { refreshApps() }
+            scope.launch { refreshActiveApp() }
+        }
+        if (foreground) startPolling()
+    }
+
+    private fun startPolling() {
+        synchronized(lock) {
+            if (pollJob?.isActive == true || !foreground) return
+            pollJob = scope.launch {
+                var tick = 0
+                while (isActive) {
+                    delay(timing.pollInterval)
+                    tick++
+                    val device = _state.value.device ?: break
+                    try {
+                        // Blocked: poll device-info often, so the banner clears the moment the setting changes.
+                        if (_state.value.link is Link.Blocked || tick % timing.infoEveryTicks == 0) {
+                            onInfo(device, ecp.deviceInfo(device.address))
+                        } else {
+                            _state.update { it.copy(activeApp = ecp.activeApp(device.address)) }
+                        }
+                    } catch (e: EcpException.Forbidden) {
+                        _state.update { it.copy(link = Link.Blocked(e.limitedMode)) }
+                    } catch (_: EcpException) {
+                        synchronized(lock) { pollJob = null }
+                        connect()
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    private fun onDeviceChanged(device: SavedDevice?) {
+        synchronized(lock) {
+            connectJob?.cancel()
+            pollJob?.cancel()
+            holdJob?.cancel()
+        }
+        _state.value = SessionState(device = device, link = if (device == null) Link.NoDevice else Link.Connecting)
+        // In the background (widget or tile woke the process) stay quiet; onForeground() connects.
+        if (device != null && foreground) connect()
+    }
+
+    // endregion
+
+    // region Queries
+
+    suspend fun refreshApps() {
+        val device = _state.value.device ?: return
+        _state.update { it.copy(appsLoading = true) }
+        try {
+            val apps = ecp.apps(device.address)
+            _state.update { it.copy(apps = apps, appsLoading = false, appsError = null) }
+        } catch (_: EcpException.Forbidden) {
+            _state.update { it.copy(appsLoading = false, appsError = AppsError.Blocked) }
+        } catch (_: EcpException) {
+            _state.update { it.copy(appsLoading = false, appsError = AppsError.Failed) }
+        }
+    }
+
+    private suspend fun refreshActiveApp() {
+        val device = _state.value.device ?: return
+        try {
+            val active = ecp.activeApp(device.address)
+            _state.update { it.copy(activeApp = active) }
+        } catch (_: EcpException) {
+            // Polling will notice a dead link.
+        }
+    }
+
+    private suspend fun refreshInfo() {
+        val device = _state.value.device ?: return
+        try {
+            onInfo(device, ecp.deviceInfo(device.address))
+        } catch (e: EcpException.Forbidden) {
+            _state.update { it.copy(link = Link.Blocked(e.limitedMode)) }
+        } catch (_: EcpException) {
+            connect()
+        }
+    }
+
+    /** Runs [block] once the TV has had a moment to react, replacing any pending follow-up. */
+    private fun settleThen(block: suspend () -> Unit) {
+        synchronized(lock) {
+            settleJob?.cancel()
+            settleJob = scope.launch {
+                delay(timing.settleDelay)
+                block()
+            }
+        }
+    }
+
+    // endregion
+
+    // region Discovery
+
+    /**
+     * Every Roku on the network, each once, with its device-info. SSDP first; then, when [exhaustive] or when
+     * SSDP found nothing (multicast blocked by the router or a VPN), probes every address in the subnet.
+     * Cancel collection (e.g. `firstOrNull`) to stop early.
+     */
+    fun discover(exhaustive: Boolean = false): Flow<FoundRoku> = channelFlow {
+        val seen = mutableSetOf<String>()
+        suspend fun offer(address: RokuAddress, info: DeviceInfo) {
+            if (seen.add(info.serialNumber)) send(FoundRoku(address, info))
+        }
+
+        try {
+            lan.withMulticastLock {
+                SsdpDiscovery(lan::openDatagramSocket).discover(timing.ssdpTimeout).collect { roku ->
+                    probeInfo(roku.address)?.let { offer(roku.address, it) }
+                }
+            }
+        } catch (_: IOException) {
+            // No multicast on this network; the subnet scan below still works.
+        }
+        if (seen.isNotEmpty() && !exhaustive) return@channelFlow
+
+        val self = lan.lanAddress() ?: return@channelFlow
+        SubnetScanner(::probeInfo)
+            .scan(SubnetScanner.hostsInSubnet(self.address, self.prefixLength))
+            .collect { (address, info) -> offer(address, info) }
+    }
+
+    private suspend fun probeInfo(address: RokuAddress): DeviceInfo? = try {
+        ecp.deviceInfo(address)
+    } catch (_: EcpException) {
+        null
+    }
+
+    /** Probes [host] directly, for "add by IP". */
+    suspend fun probe(host: String): FoundRoku? {
+        val address = RokuAddress(host)
+        return try {
+            FoundRoku(address, ecp.deviceInfo(address))
+        } catch (_: EcpException) {
+            null
+        }
+    }
+
+    /** Remembers [found] and makes it the current TV. */
+    suspend fun choose(found: FoundRoku) {
+        store.upsert(
+            SavedDevice(
+                serialNumber = found.info.serialNumber,
+                name = found.info.name,
+                host = found.address.host,
+                port = found.address.port,
+                isTv = found.info.isTv,
+                wakeMacs = found.info.wakeMacs,
+            ),
+        )
+        store.select(found.info.serialNumber)
+    }
+
+    // endregion
+}
+
+val SavedDevice.address: RokuAddress get() = RokuAddress(host, port)
+
+/** The TV isn't answering at all, so Power should try to wake it rather than send a key. */
+private val Link.tvMissing: Boolean
+    get() = this == Link.Unreachable || this == Link.Searching
