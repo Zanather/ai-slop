@@ -1,7 +1,5 @@
 package io.github.zanather.clicker.ui.settings
 
-import android.content.Context
-import android.content.pm.PackageManager
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
@@ -14,11 +12,9 @@ import androidx.compose.material.icons.rounded.Vibration
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import io.github.zanather.clicker.R
@@ -38,8 +34,6 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var helpOpen by rememberSaveable { mutableStateOf(false) }
-    val context = LocalContext.current
-    val version = remember(context) { context.versionName() }
     ClickerScaffold(title = stringResource(R.string.settings_title), onBack = onBack, modifier = modifier) { padding ->
         ReadableColumnPadding(padding) { contentPadding ->
             LazyColumn(
@@ -99,27 +93,16 @@ fun SettingsScreen(
                 item(key = "help") { SectionHeader(stringResource(R.string.settings_section_help)) }
                 item(key = "help-card") { HelpCard(expanded = helpOpen, onToggle = { helpOpen = !helpOpen }) }
                 item(key = "about") { SectionHeader(stringResource(R.string.settings_section_about)) }
-                item(key = "about-row") { AboutRow(version) }
+                item(key = "about-row") { AboutRow(state.appVersion) }
             }
         }
     }
 }
 
-/** Null when the package manager can't say, as under Robolectric without a full package. */
-private fun Context.versionName(): String? = runCatching {
-    val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        packageManager.getPackageInfo(packageName, PackageManager.PackageInfoFlags.of(0))
-    } else {
-        @Suppress("DEPRECATION")
-        packageManager.getPackageInfo(packageName, 0)
-    }
-    info.versionName
-}.getOrNull()
-
 @PreviewLightDark
 @Composable
 private fun SettingsScreenPreview() {
     ClickerTheme {
-        SettingsScreen(SettingsUiState(keepScreenOn = true), onChange = {}, onBack = {})
+        SettingsScreen(SettingsUiState(keepScreenOn = true, appVersion = "1.0.0"), onChange = {}, onBack = {})
     }
 }

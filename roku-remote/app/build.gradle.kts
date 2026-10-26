@@ -15,8 +15,8 @@ android {
         // Not 37 yet: targeting Android 17 makes LAN access a runtime "Nearby devices" permission, and a
         // denied prompt would leave the remote dead. At 36 the permission is granted with INTERNET.
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.0.1"
+        versionCode = 3
+        versionName = "1.0.2"
     }
 
     signingConfigs {
@@ -48,6 +48,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         compose = true
     }
 

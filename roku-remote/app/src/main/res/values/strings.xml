@@ -9,4 +9,10 @@
     <string name="widget_volume_up">Volume up</string>
     <string name="widget_play_pause">Play or pause</string>
     <string name="widget_no_tv">Open Clicker to pick a TV</string>
+    <string name="crash_title">Clicker crashed</string>
+    <string name="crash_body">Sorry about that. Copy this report and send it to whoever builds your Clicker; it says exactly what went wrong.</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_share">Share</string>
+    <string name="crash_continue">Try again</string>
+    <string name="crash_copied">Crash report copied</string>
 </resources>

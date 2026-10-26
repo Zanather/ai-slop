@@ -34,6 +34,10 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".crash.CrashActivity"
+            android:exported="false" />
+
         <service
             android:name=".tile.PlayPauseTileService"
             android:exported="true"

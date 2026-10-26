@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import io.github.zanather.clicker.BuildConfig
 import io.github.zanather.clicker.data.DeviceStore
 import io.github.zanather.clicker.data.Settings
 import io.github.zanather.clicker.data.StoreState
@@ -79,7 +80,7 @@ class ClickerViewModel(
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), DevicesUiState())
 
     val settingsUi: StateFlow<SettingsUiState> = settings
-        .map { SettingsUiState(it.hapticsEnabled, it.volumeKeysControlTv, it.keepScreenOn, it.dynamicColor) }
+        .map { SettingsUiState(it.hapticsEnabled, it.volumeKeysControlTv, it.keepScreenOn, it.dynamicColor, BuildConfig.VERSION_NAME) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, SettingsUiState())
 
     private val _info = MutableStateFlow(DeviceInfoUiState(loading = true))

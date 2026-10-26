@@ -7,6 +7,7 @@ import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.SingletonImageLoader
 import coil3.network.okhttp.OkHttpNetworkFetcherFactory
+import io.github.zanather.clicker.crash.CrashLog
 import io.github.zanather.clicker.data.DeviceStore
 import io.github.zanather.clicker.ecp.EcpClient
 import io.github.zanather.clicker.net.LanNetwork
@@ -28,12 +29,22 @@ class AppContainer(context: Context) {
 }
 
 class ClickerApp : Application(), SingletonImageLoader.Factory {
-    lateinit var container: AppContainer
-        private set
+    private var started: AppContainer? = null
+
+    val container: AppContainer
+        get() = checkNotNull(started) { "App failed to start; the crash report has the cause" }
 
     override fun onCreate() {
         super.onCreate()
-        container = AppContainer(this)
+        CrashLog.install(this)
+        // If startup itself throws, keep the process alive so MainActivity can show the report,
+        // rather than dying the same way on every launch.
+        started = try {
+            AppContainer(this)
+        } catch (e: Exception) {
+            CrashLog.record(this, e)
+            null
+        }
     }
 
     // Channel icons come from the TV over the same Wi-Fi-pinned client as everything else.

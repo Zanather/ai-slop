@@ -24,7 +24,7 @@ class SettingsScreenshotTest {
     @get:Rule
     val compose = createComposeRule()
 
-    private val state = SettingsUiState(hapticsEnabled = true, volumeKeysControlTv = true, keepScreenOn = false, dynamicColor = false)
+    private val state = SettingsUiState(hapticsEnabled = true, volumeKeysControlTv = true, keepScreenOn = false, dynamicColor = false, appVersion = "1.0.0")
 
     @Test
     fun settings() {

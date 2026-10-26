@@ -137,4 +137,6 @@ data class SettingsUiState(
     val keepScreenOn: Boolean = false,
     /** Material You colors from the wallpaper instead of Clicker's own palette. */
     val dynamicColor: Boolean = false,
+    /** Shown under About; null hides the number. */
+    val appVersion: String? = null,
 )

@@ -1,5 +1,6 @@
 package io.github.zanather.clicker
 
+import android.content.Intent
 import android.os.Bundle
 import android.os.SystemClock
 import android.view.KeyEvent
@@ -14,6 +15,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import io.github.zanather.clicker.crash.CrashActivity
+import io.github.zanather.clicker.crash.CrashLog
 import io.github.zanather.clicker.ecp.RemoteKey
 import io.github.zanather.clicker.ui.ClickerNavHost
 import io.github.zanather.clicker.ui.ClickerViewModel
@@ -30,6 +33,13 @@ class MainActivity : ComponentActivity() {
     private var lastVolumeRepeat = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (CrashLog.read(this) != null) {
+            // The last run crashed: show the report instead of walking into the same crash.
+            super.onCreate(savedInstanceState)
+            startActivity(Intent(this, CrashActivity::class.java))
+            finish()
+            return
+        }
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
 
