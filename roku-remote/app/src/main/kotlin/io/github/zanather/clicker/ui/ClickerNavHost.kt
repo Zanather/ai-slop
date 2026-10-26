@@ -16,19 +16,19 @@ import io.github.zanather.clicker.ui.settings.SettingsScreen
 import kotlinx.serialization.Serializable
 
 @Serializable
-private data object RemoteRoute
+internal data object RemoteRoute
 
 @Serializable
-private data object AppsRoute
+internal data object AppsRoute
 
 @Serializable
-private data object DevicesRoute
+internal data object DevicesRoute
 
 @Serializable
-private data class InfoRoute(val serialNumber: String?)
+internal data class InfoRoute(val serialNumber: String?)
 
 @Serializable
-private data object SettingsRoute
+internal data object SettingsRoute
 
 /** The remote is home; everything else is one level deep. */
 @Composable
