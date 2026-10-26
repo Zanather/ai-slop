@@ -51,6 +51,11 @@ android {
         compose = true
     }
 
+    lint {
+        // targetSdk stays at 36 on purpose; see defaultConfig.
+        disable += "OldTargetApi"
+    }
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true

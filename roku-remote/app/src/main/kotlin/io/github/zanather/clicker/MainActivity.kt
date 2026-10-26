@@ -66,31 +66,36 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * Phone volume buttons drive the TV while the app is open. Handled here rather than in Compose because
-     * Compose key handlers only see events along the focused node's path.
+     * Phone volume buttons drive the TV while the app is open. These run when nothing on screen consumed the
+     * key; returning true stops the phone's own volume from changing.
      */
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        val key = when (event.keyCode) {
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val key = volumeKey(keyCode) ?: return super.onKeyDown(keyCode, event)
+        if (event.repeatCount == 0) {
+            viewModel.press(key)
+        } else if (key != RemoteKey.VolumeMute) {
+            // Held button: the system repeats at ~20 Hz; the TV only keeps up with about half that.
+            val now = SystemClock.uptimeMillis()
+            if (now - lastVolumeRepeat >= VOLUME_REPEAT_MS) {
+                lastVolumeRepeat = now
+                viewModel.press(key)
+            }
+        }
+        return true
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean =
+        volumeKey(keyCode) != null || super.onKeyUp(keyCode, event)
+
+    /** The TV key for a phone volume button, or null when the button should keep controlling the phone. */
+    private fun volumeKey(keyCode: Int): RemoteKey? {
+        if (!forwardsVolumeKeys()) return null
+        return when (keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> RemoteKey.VolumeUp
             KeyEvent.KEYCODE_VOLUME_DOWN -> RemoteKey.VolumeDown
             KeyEvent.KEYCODE_VOLUME_MUTE -> RemoteKey.VolumeMute
             else -> null
         }
-        if (key == null || !forwardsVolumeKeys()) return super.dispatchKeyEvent(event)
-
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            if (event.repeatCount == 0) {
-                viewModel.press(key)
-            } else if (key != RemoteKey.VolumeMute) {
-                // Held button: the system repeats at ~20 Hz; the TV only keeps up with about half that.
-                val now = SystemClock.uptimeMillis()
-                if (now - lastVolumeRepeat >= VOLUME_REPEAT_MS) {
-                    lastVolumeRepeat = now
-                    viewModel.press(key)
-                }
-            }
-        }
-        return true
     }
 
     private fun forwardsVolumeKeys(): Boolean {
