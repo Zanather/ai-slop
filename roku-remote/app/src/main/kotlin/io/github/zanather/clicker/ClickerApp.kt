@@ -12,9 +12,13 @@ import io.github.zanather.clicker.data.DeviceStore
 import io.github.zanather.clicker.ecp.EcpClient
 import io.github.zanather.clicker.net.LanNetwork
 import io.github.zanather.clicker.session.RokuSession
+import io.github.zanather.clicker.widget.RemoteWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 private val Context.dataStore by preferencesDataStore(name = "clicker")
 
@@ -26,6 +30,12 @@ class AppContainer(context: Context) {
     val ecp = EcpClient(http)
     val store = DeviceStore(context.dataStore)
     val session = RokuSession(scope, ecp, store, lan)
+
+    init {
+        // With Wi-Fi and Ethernet both up, the TV's address says which of them to pin sockets to.
+        scope.launch { store.state.map { it.selected?.host }.distinctUntilChanged().collect { lan.tvHost = it } }
+        RemoteWidget.keepInSync(scope, context, store)
+    }
 }
 
 class ClickerApp : Application(), SingletonImageLoader.Factory {

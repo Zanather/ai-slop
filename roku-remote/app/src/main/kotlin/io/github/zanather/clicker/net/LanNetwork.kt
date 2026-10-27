@@ -12,36 +12,49 @@ import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.Socket
+import java.util.concurrent.ConcurrentHashMap
 import javax.net.SocketFactory
 
 /** The phone's own address on the Wi-Fi network, for scanning the subnet and aiming Wake-on-LAN. */
 data class LanAddress(val address: Inet4Address, val prefixLength: Int) {
+    private val mask: Int get() = if (prefixLength == 0) 0 else -1 shl (32 - prefixLength)
+
     /** Directed broadcast for this subnet, e.g. 192.168.8.255 for a /24. */
     val broadcast: InetAddress
         get() {
-            val ip = address.address.fold(0) { acc, b -> (acc shl 8) or (b.toInt() and 0xFF) }
-            val mask = if (prefixLength == 0) 0 else -1 shl (32 - prefixLength)
-            val bcast = ip or mask.inv()
+            val bcast = address.address.toInt() or mask.inv()
             return InetAddress.getByAddress(ByteArray(4) { i -> (bcast ushr (24 - 8 * i)).toByte() })
         }
+
+    /** Whether [host] is an IPv4 address on this subnet. Hostnames never match: resolving one here could block. */
+    operator fun contains(host: String): Boolean {
+        val parts = host.split('.')
+        if (parts.size != 4) return false
+        val octets = parts.map { part -> part.toIntOrNull()?.takeIf { it in 0..255 } ?: return false }
+        val ip = octets.fold(0) { acc, octet -> (acc shl 8) or octet }
+        return (ip and mask) == (address.address.toInt() and mask)
+    }
+
+    private fun ByteArray.toInt() = fold(0) { acc, b -> (acc shl 8) or (b.toInt() and 0xFF) }
 }
 
 /**
- * Keeps track of the Wi-Fi network and hands out sockets that prefer it.
+ * Keeps track of the Wi-Fi and Ethernet networks and hands out sockets that prefer them.
  *
  * With a VPN up, Android may route 192.168.x.x into the tunnel, where the TV can't be reached. Binding
- * each socket to the Wi-Fi [Network] skips the tunnel. A non-bypassable VPN refuses the bind (EPERM); then
+ * each socket to the LAN [Network] skips the tunnel. A non-bypassable VPN refuses the bind (EPERM); then
  * the socket stays on the default route, which works when that VPN excludes the LAN.
  */
 class LanNetwork(context: Context) : Lan {
     private val connectivity = context.getSystemService(ConnectivityManager::class.java)
     private val wifiManager = context.applicationContext.getSystemService(WifiManager::class.java)
 
-    @Volatile
-    private var wifi: Network? = null
+    /** Every matching network that is up: a phone on a USB-C dock can have Wi-Fi and Ethernet at once. */
+    private val networks = ConcurrentHashMap<Network, LanLink>()
 
+    /** The selected TV's address, so that with two LANs up the sockets go to the one the TV is on. */
     @Volatile
-    private var wifiLink: LinkProperties? = null
+    var tvHost: String? = null
 
     init {
         val request = NetworkRequest.Builder()
@@ -52,27 +65,28 @@ class LanNetwork(context: Context) : Lan {
             request,
             object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
-                    wifi = network
+                    networks.putIfAbsent(network, LanLink())
+                }
+
+                override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
+                    val wifi = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                    networks.compute(network) { _, link -> (link ?: LanLink()).copy(isWifi = wifi) }
                 }
 
                 override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) {
-                    wifi = network
-                    wifiLink = linkProperties
+                    networks.compute(network) { _, link -> (link ?: LanLink()).copy(properties = linkProperties) }
                 }
 
                 override fun onLost(network: Network) {
-                    if (wifi == network) {
-                        wifi = null
-                        wifiLink = null
-                    }
+                    networks.remove(network)
                 }
             },
         )
     }
 
-    /** For OkHttp: plain sockets, bound to Wi-Fi when the platform allows it. */
+    /** For OkHttp: plain sockets, bound to the LAN when the platform allows it. */
     val socketFactory: SocketFactory = object : SocketFactory() {
-        override fun createSocket(): Socket = Socket().also(::preferWifi)
+        override fun createSocket(): Socket = Socket().also(::bindToLan)
 
         // OkHttp only calls createSocket(); these exist to satisfy the abstract class.
         override fun createSocket(host: String, port: Int): Socket = unsupported()
@@ -83,15 +97,13 @@ class LanNetwork(context: Context) : Lan {
         private fun unsupported(): Nothing = throw UnsupportedOperationException("Only unconnected sockets are supported")
     }
 
-    /** A UDP socket for SSDP and Wake-on-LAN, bound to Wi-Fi when the platform allows it. */
-    override fun openDatagramSocket(): DatagramSocket = DatagramSocket().also(::preferWifi)
+    /** A UDP socket for SSDP and Wake-on-LAN, bound to the LAN when the platform allows it. */
+    override fun openDatagramSocket(): DatagramSocket = DatagramSocket().also(::bindToLan)
 
-    /** The phone's IPv4 address on Wi-Fi/Ethernet, or null when not on a LAN. */
+    /** The phone's IPv4 address on the network sockets are bound to, or null when not on a LAN. */
     override fun lanAddress(): LanAddress? {
-        val link = wifiLink ?: wifi?.let(connectivity::getLinkProperties) ?: return null
-        return link.linkAddresses
-            .firstOrNull { it.address is Inet4Address && !it.address.isLoopbackAddress }
-            ?.let { LanAddress(it.address as Inet4Address, it.prefixLength) }
+        val (network, link) = chosen() ?: return null
+        return link.address ?: connectivity.getLinkProperties(network)?.lanAddress()
     }
 
     /** Where to send Wake-on-LAN: the subnet's directed broadcast first, then the limited broadcast. */
@@ -114,8 +126,24 @@ class LanNetwork(context: Context) : Lan {
         }
     }
 
-    private fun preferWifi(socket: Socket) {
-        val network = wifi ?: return
+    /**
+     * The network to use, picked the same way every time rather than by whichever callback came last: the one
+     * whose subnet holds the TV, then the system's default, then Wi-Fi, then any.
+     */
+    private fun chosen(): Pair<Network, LanLink>? {
+        val up = networks.entries.map { it.key to it.value }.ifEmpty { return null }
+        val tv = tvHost
+        val default = connectivity.activeNetwork
+        return up.minWith(
+            compareByDescending<Pair<Network, LanLink>> { (_, link) -> tv != null && link.address?.contains(tv) == true }
+                .thenByDescending { (network, _) -> network == default }
+                .thenByDescending { (_, link) -> link.isWifi }
+                .thenBy { (network, _) -> network.networkHandle },
+        )
+    }
+
+    private fun bindToLan(socket: Socket) {
+        val network = chosen()?.first ?: return
         try {
             network.bindSocket(socket)
         } catch (_: IOException) {
@@ -123,12 +151,21 @@ class LanNetwork(context: Context) : Lan {
         }
     }
 
-    private fun preferWifi(socket: DatagramSocket) {
-        val network = wifi ?: return
+    private fun bindToLan(socket: DatagramSocket) {
+        val network = chosen()?.first ?: return
         try {
             network.bindSocket(socket)
         } catch (_: IOException) {
             // Non-bypassable VPN: stay on the default route.
         }
     }
+
+    private data class LanLink(val isWifi: Boolean = false, val properties: LinkProperties? = null) {
+        val address: LanAddress? get() = properties?.lanAddress()
+    }
 }
+
+private fun LinkProperties.lanAddress(): LanAddress? =
+    linkAddresses
+        .firstOrNull { it.address is Inet4Address && !it.address.isLoopbackAddress }
+        ?.let { LanAddress(it.address as Inet4Address, it.prefixLength) }
