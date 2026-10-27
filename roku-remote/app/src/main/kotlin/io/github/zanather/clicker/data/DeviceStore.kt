@@ -22,6 +22,8 @@ data class SavedDevice(
     val wakeMacs: List<String> = emptyList(),
     /** Pinned channel ids, in the order shown on the remote. */
     val favorites: List<String> = emptyList(),
+    /** Last seen name of each favorite, to label its tile while the TV can't list its channels. */
+    val favoriteNames: Map<String, String> = emptyMap(),
 )
 
 @Serializable
@@ -61,6 +63,7 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         val merged = existing?.let {
             device.copy(
                 favorites = it.favorites,
+                favoriteNames = it.favoriteNames,
                 wakeMacs = device.wakeMacs.ifEmpty { it.wakeMacs },
             )
         } ?: device
@@ -90,8 +93,27 @@ class DeviceStore(private val dataStore: DataStore<Preferences>) {
         devices.map { if (it.serialNumber == serialNumber) it.copy(host = host, port = port) else it }
     }
 
-    suspend fun setFavorites(serialNumber: String, favorites: List<String>) = editDevices { devices ->
-        devices.map { if (it.serialNumber == serialNumber) it.copy(favorites = favorites) else it }
+    /** Pins, unpins or reorders channels. [names] are channel names to remember along with them. */
+    suspend fun setFavorites(serialNumber: String, favorites: List<String>, names: Map<String, String> = emptyMap()) =
+        editDevices { devices ->
+            devices.map {
+                if (it.serialNumber == serialNumber) {
+                    it.copy(favorites = favorites, favoriteNames = (it.favoriteNames + names).filterKeys { id -> id in favorites })
+                } else {
+                    it
+                }
+            }
+        }
+
+    /** Updates the remembered names of the device's favorites from [names] (channel id to name). */
+    suspend fun rememberFavoriteNames(serialNumber: String, names: Map<String, String>) = editDevices { devices ->
+        devices.map {
+            if (it.serialNumber == serialNumber) {
+                it.copy(favoriteNames = it.favoriteNames + names.filterKeys { id -> id in it.favorites })
+            } else {
+                it
+            }
+        }
     }
 
     suspend fun updateSettings(transform: (Settings) -> Settings) {

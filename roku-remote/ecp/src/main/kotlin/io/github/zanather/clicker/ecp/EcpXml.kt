@@ -15,12 +15,63 @@ internal class EcpXmlException(message: String) : Exception(message)
  *
  * ECP responses never carry a DTD, so any `<!DOCTYPE` or `<!ENTITY` is refused before the parser sees it.
  * That keeps XXE safety independent of which hardening features the platform's parser happens to support.
+ * Deeply nested documents are refused too: DOM building and `textContent` recurse once per level.
  */
 internal fun parseXml(xml: String): Element {
     if (xml.contains("<!DOCTYPE", ignoreCase = true) || xml.contains("<!ENTITY", ignoreCase = true)) {
         throw EcpXmlException("Refusing a document with a DTD")
     }
+    requireShallow(xml)
     return parseHardened(xml)
+}
+
+/** ECP documents are three levels deep at most. */
+private const val MAX_XML_DEPTH = 32
+
+/**
+ * Throws if elements nest deeper than [MAX_XML_DEPTH], in one linear pass. Skips comments, CDATA and
+ * processing instructions, and quoted attribute values, so markup inside them can't hide real nesting.
+ * Stops at anything unterminated, which the parser rejects anyway.
+ */
+private fun requireShallow(xml: String) {
+    fun skipPast(token: String, from: Int): Int = xml.indexOf(token, from).let { if (it < 0) xml.length else it + token.length }
+
+    var depth = 0
+    var i = 0
+    while (true) {
+        val start = xml.indexOf('<', i)
+        if (start < 0 || start + 1 >= xml.length) return
+        i = when {
+            xml.startsWith("<!--", start) -> skipPast("-->", start + 4)
+            xml.startsWith("<![CDATA[", start) -> skipPast("]]>", start + 9)
+            xml[start + 1] == '?' -> skipPast("?>", start + 2)
+            xml[start + 1] == '/' -> {
+                depth--
+                skipPast(">", start)
+            }
+            else -> {
+                var end = start + 1
+                var quote: Char? = null
+                while (end < xml.length) {
+                    val c = xml[end]
+                    if (quote != null) {
+                        if (c == quote) quote = null
+                    } else if (c == '"' || c == '\'') {
+                        quote = c
+                    } else if (c == '>') {
+                        break
+                    }
+                    end++
+                }
+                if (end >= xml.length) return
+                if (xml[end - 1] != '/') {
+                    depth++
+                    if (depth > MAX_XML_DEPTH) throw EcpXmlException("Document nested too deeply")
+                }
+                end + 1
+            }
+        }
+    }
 }
 
 /** The parser alone, without [parseXml]'s DTD pre-check. */

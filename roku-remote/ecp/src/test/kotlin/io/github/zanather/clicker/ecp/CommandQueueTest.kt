@@ -22,6 +22,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Test
+import java.io.IOException
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -195,6 +196,42 @@ class CommandQueueTest {
         advanceUntilIdle()
         assertThat(ran).containsExactly(1)
         assertThat(failures).isEmpty()
+    }
+
+    @Test
+    fun `discardOffered skips waiting offered commands but not run callers or later offers`() = runTest {
+        val queue = newQueue()
+        val gate = CompletableDeferred<Unit>()
+        val ran = mutableListOf<Int>()
+        queue.offer { gate.await(); ran += 1 }
+        runCurrent() // The consumer takes command 1 and blocks on the gate.
+        queue.offer { ran += 2 }
+        val waiting = async { queue.run { ran += 3 } }
+        runCurrent()
+        queue.offer { ran += 4 }
+
+        queue.discardOffered()
+        queue.offer { ran += 5 }
+        gate.complete(Unit)
+        waiting.await()
+        advanceUntilIdle()
+
+        // 1 was already running; 2 and 4 were discarded.
+        assertThat(ran).containsExactly(1, 3, 5).inOrder()
+    }
+
+    @Test
+    fun `discarding from onFailure skips everything queued behind the failed command`() = runTest {
+        lateinit var queue: CommandQueue
+        queue = CommandQueue(queueScope()) { failures += it; queue.discardOffered() }
+        val ran = mutableListOf<Int>()
+        queue.offer { throw EcpException.Unreachable(address, IOException("down")) }
+        queue.offer { ran += 2 }
+        queue.offer { ran += 3 }
+        advanceUntilIdle()
+
+        assertThat(ran).isEmpty()
+        assertThat(failures).hasSize(1)
     }
 
     @Test

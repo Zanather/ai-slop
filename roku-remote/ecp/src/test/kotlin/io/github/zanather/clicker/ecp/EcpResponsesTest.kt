@@ -213,6 +213,29 @@ class EcpResponsesTest {
     }
 
     @Test
+    fun `a deeply nested document is BadResponse rather than a stack overflow`() {
+        val depth = 100_000 // Well under the size cap.
+        val nested = "<a>".repeat(depth) + "</a>".repeat(depth)
+        badDeviceInfo("<device-info><serial-number>X</serial-number><x>$nested</x></device-info>")
+    }
+
+    @Test
+    fun `markup inside comments, CDATA, instructions and attributes can't hide nesting`() {
+        val hiders = listOf("<!-- </a> -->", "<![CDATA[</a>]]>", "<?pi </a>?>")
+        for (hider in hiders) {
+            badDeviceInfo("<device-info><serial-number>X</serial-number>" + "<a>$hider".repeat(40) + "</a>".repeat(40) + "</device-info>")
+        }
+        badDeviceInfo("<device-info><serial-number>X</serial-number>" + "<a b=\"/\">".repeat(40) + "</a>".repeat(40) + "</device-info>")
+    }
+
+    @Test
+    fun `wide documents with self-closing tags and markup in attributes aren't deep`() {
+        val xml = "<apps>" + "<app id=\"1\" note=\"a>b\"/>".repeat(100) + "<!-- <a><a> -->".repeat(50) +
+            "<app id=\"2\">Two</app>".repeat(100) + "</apps>"
+        assertThat(parseApps(xml)).hasSize(200)
+    }
+
+    @Test
     fun `a byte order mark and leading whitespace are tolerated`() = runTest {
         assertThat(deviceInfo("﻿\n  " + deviceInfoXml("serial-number" to "S1")).serialNumber).isEqualTo("S1")
     }

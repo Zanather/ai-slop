@@ -56,6 +56,17 @@ class UiMappingTest {
     }
 
     @Test
+    fun favoritesKeepTheirRememberedNamesWhileTheChannelListIsntLoaded() {
+        val remembered = device.copy(favoriteNames = mapOf("837" to "YouTube"))
+        val state = SessionState(remembered, Link.Unreachable)
+
+        val ui = state.toRemoteUiState(StoreState(listOf(remembered), remembered.serialNumber), ecp)
+
+        // "12" was pinned before names were remembered; its id is all there is.
+        assertThat(ui.favorites.map { it.name }).containsExactly("YouTube", "12").inOrder()
+    }
+
+    @Test
     fun aTvInStandbyShowsAsOff() {
         assertThat(SessionState(device, Link.Connected, info(PowerMode.Ready)).connectionStatus()).isEqualTo(ConnectionStatus.TvOff)
         assertThat(SessionState(device, Link.Connected, info(PowerMode.DisplayOff)).connectionStatus()).isEqualTo(ConnectionStatus.TvOff)

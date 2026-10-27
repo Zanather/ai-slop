@@ -50,6 +50,24 @@ class DeviceStoreTest {
     }
 
     @Test
+    fun favoritesKeepTheirNamesUntilUnpinned() = runTest {
+        val (_, store) = newStore()
+        store.upsert(tv)
+        store.setFavorites("SERIAL1", listOf("12"), mapOf("12" to "Netflix"))
+        store.setFavorites("SERIAL1", listOf("12", "837"), mapOf("837" to "YouTube"))
+
+        store.rememberFavoriteNames("SERIAL1", mapOf("12" to "Netflix Kids", "2213" to "Roku Media Player"))
+        store.upsert(tv.copy(name = "Den"))
+
+        assertThat(store.state.first().devices.single().favoriteNames)
+            .containsExactly("12", "Netflix Kids", "837", "YouTube")
+
+        store.setFavorites("SERIAL1", listOf("837"))
+
+        assertThat(store.state.first().devices.single().favoriteNames).containsExactly("837", "YouTube")
+    }
+
+    @Test
     fun forgettingTheSelectedTvSelectsTheNextOne() = runTest {
         val (_, store) = newStore()
         store.upsert(tv)

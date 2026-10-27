@@ -117,6 +117,36 @@ class RokuSessionTest {
     }
 
     @Test
+    fun checkAgainOnOlderFirmwareKeepsBlockedUntilTheTvAllowsKeys() = runBlocking<Unit> {
+        roku.ecpMode = null
+        roku.rejectKeys = true
+        val session = connected()
+        session.press(RemoteKey.Home)
+        session.awaitState { it.link == Link.Blocked(limitedMode = true) }
+
+        session.connect() // "Check again" with nothing changed on the TV.
+        delay(600) // Several polls.
+        assertThat(session.state.value.link).isEqualTo(Link.Blocked(limitedMode = true))
+
+        roku.rejectKeys = false // The user switched the setting to Enabled.
+        session.connect()
+        session.awaitState { it.link == Link.Connected }
+        assertThat(roku.keys).isEmpty()
+    }
+
+    @Test
+    fun keysGoOutBeforeTheFirstConnectFinishes() = runBlocking<Unit> {
+        saveTv()
+        val session = session() // In the background, so nothing has probed the TV.
+        session.awaitState { it.device != null }
+
+        session.press(RemoteKey.Home)
+
+        awaitKeys(1)
+        assertThat(roku.keys).containsExactly("Home")
+    }
+
+    @Test
     fun pressesArriveInOrder() = runBlocking<Unit> {
         val session = connected()
 
@@ -155,6 +185,38 @@ class RokuSessionTest {
     }
 
     @Test
+    fun quickTapsOnARepeatingKeyAreNeverDroppedBehindASlowPress() = runBlocking<Unit> {
+        val session = connected()
+        roku.keyDelayMs = 200
+
+        session.press(RemoteKey.Home)
+        delay(20)
+        session.holdStart(RemoteKey.Down)
+        delay(60)
+        session.holdEnd(RemoteKey.Down) // Home is still in flight.
+        session.holdStart(RemoteKey.Down)
+        session.holdEnd(RemoteKey.Down) // Released before the hold even starts.
+        session.press(RemoteKey.Select)
+
+        awaitKeys(4)
+        delay(300)
+        assertThat(roku.keys).containsExactly("Home", "Down", "Down", "Select").inOrder()
+    }
+
+    @Test
+    fun pressesQueuedBehindAStalledOneAreDroppedNotReplayedLate() = runBlocking<Unit> {
+        val session = connected()
+        roku.keyDelayMs = 3_000 // Past the read timeout: the TV hangs.
+
+        repeat(4) { session.press(RemoteKey.Down) }
+        awaitKeys(1)
+        roku.keyDelayMs = 0
+        delay(3_500)
+
+        assertThat(roku.keys).containsExactly("Down")
+    }
+
+    @Test
     fun powerFollowsTheTvsPowerState() = runBlocking<Unit> {
         val session = connected()
 
@@ -166,6 +228,20 @@ class RokuSessionTest {
         session.press(RemoteKey.Power)
         awaitKeys(2)
         assertThat(roku.keys.last()).isEqualTo("PowerOn")
+    }
+
+    @Test
+    fun aKeyRightAfterPowerDoesntCancelThePowerStateRefresh() = runBlocking<Unit> {
+        roku.powerMode = "Ready"
+        // Polls too rarely to refresh the power state on their own.
+        val session = connected(timing.copy(pollInterval = 30.seconds, settleDelay = 300.milliseconds))
+
+        session.press(RemoteKey.Power)
+        session.press(RemoteKey.Home)
+
+        awaitKeys(2)
+        assertThat(roku.keys).containsExactly("PowerOn", "Home").inOrder()
+        session.awaitState(2.seconds) { it.info?.powerMode?.isScreenOn == true }
     }
 
     @Test
@@ -214,6 +290,28 @@ class RokuSessionTest {
     }
 
     @Test
+    fun keysNeverReachAnotherTvThatTookTheSavedAddress() = runBlocking<Unit> {
+        roku.powerMode = "Ready"
+        saveTv(serial = "MY-OTHER-TV") // The FakeRoku at the saved address is a different TV.
+        val lan = FakeLan()
+        val session = session(lan)
+        session.onForeground()
+        session.awaitState { it.link == Link.Unreachable }
+
+        session.press(RemoteKey.VolumeUp)
+        session.launch("837")
+        session.sendKeys(LiteralKey.of("a"))
+        session.press(RemoteKey.Power)
+        session.awaitState { it.link == Link.Waking }
+        session.awaitState(5.seconds) { it.link == Link.Unreachable }
+
+        assertThat(roku.keys).isEmpty()
+        assertThat(roku.launches).isEmpty()
+        assertThat(roku.powerMode).isEqualTo("Ready")
+        assertThat(lan.sent.filter { it.length == 102 }).isNotEmpty() // Ours still gets Wake-on-LAN.
+    }
+
+    @Test
     fun wakeSendsMagicPacketsThenGivesUp() = runBlocking<Unit> {
         saveTv(port = deadPort())
         val lan = FakeLan()
@@ -246,6 +344,19 @@ class RokuSessionTest {
     }
 
     @Test
+    fun powerThatCantReachTheTvWakesIt() = runBlocking<Unit> {
+        saveTv(port = deadPort())
+        val lan = FakeLan()
+        val session = session(lan) // In the background, so the session doesn't know yet that the TV is gone.
+        session.awaitState { it.device != null }
+
+        session.press(RemoteKey.Power)
+
+        session.awaitState { it.link == Link.Waking }
+        withTimeout(3.seconds) { while (lan.sent.none { it.length == 102 }) delay(10) }
+    }
+
+    @Test
     fun widgetPressWorksWithoutTheAppInTheForeground() = runBlocking<Unit> {
         saveTv()
         val session = session()
@@ -261,6 +372,29 @@ class RokuSessionTest {
 
         assertThat(session.pressFromOutside(RemoteKey.Power)).isTrue()
         assertThat(roku.keys).containsExactly("PowerOff")
+    }
+
+    @Test
+    fun widgetPressesNeverReachAnotherTvAtTheSavedAddress() = runBlocking<Unit> {
+        saveTv(serial = "MY-OTHER-TV")
+        val lan = FakeLan()
+        val session = session(lan)
+
+        assertThat(session.pressFromOutside(RemoteKey.Power)).isFalse()
+        assertThat(session.pressFromOutside(RemoteKey.Play)).isFalse()
+
+        assertThat(roku.keys).isEmpty()
+        assertThat(lan.sent.filter { it.length == 102 }).isNotEmpty() // Ours may just be asleep.
+    }
+
+    @Test
+    fun remembersFavoriteNamesWhenTheChannelListLoads() = runBlocking<Unit> {
+        saveTv()
+        store.setFavorites(roku.serial, listOf("837", "12"))
+        session().onForeground()
+
+        val saved = withTimeout(5.seconds) { store.state.first { it.selected?.favoriteNames?.size == 2 } }.selected
+        assertThat(saved?.favoriteNames).containsExactly("837", "YouTube", "12", "Netflix")
     }
 
     @Test
@@ -280,11 +414,12 @@ class RokuSessionTest {
 
     // region helpers
 
-    private fun session(lan: Lan = FakeLan()) = RokuSession(scope, EcpClient(EcpClient.defaultHttpClient()), store, lan, timing)
+    private fun session(lan: Lan = FakeLan(), timing: SessionTiming = this.timing) =
+        RokuSession(scope, EcpClient(EcpClient.defaultHttpClient()), store, lan, timing)
 
-    private suspend fun connected(): RokuSession {
+    private suspend fun connected(timing: SessionTiming = this.timing): RokuSession {
         saveTv()
-        return session().also {
+        return session(timing = timing).also {
             it.onForeground()
             it.awaitState { s -> s.info != null && s.link != Link.Connecting }
         }

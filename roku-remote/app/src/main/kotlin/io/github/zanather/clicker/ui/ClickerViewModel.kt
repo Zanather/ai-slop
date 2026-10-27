@@ -109,9 +109,11 @@ class ClickerViewModel(
     }
 
     fun toggleFavorite(appId: String) {
-        val device = session.state.value.device ?: return
+        val state = session.state.value
+        val device = state.device ?: return
         val favorites = if (appId in device.favorites) device.favorites - appId else device.favorites + appId
-        viewModelScope.launch { store.setFavorites(device.serialNumber, favorites) }
+        val names = state.apps.filter { it.id == appId }.associate { it.id to it.name }
+        viewModelScope.launch { store.setFavorites(device.serialNumber, favorites, names) }
     }
 
     // endregion
@@ -220,7 +222,7 @@ internal fun SessionState.toRemoteUiState(stored: StoreState, ecp: EcpClient): R
         isTv = info?.isTv ?: device.isTv,
         favorites = device.favorites.map { id ->
             val app = byId[id]
-            AppTile(id, app?.name ?: id, ecp.iconUrl(device.address, id).toString(), isFavorite = true)
+            AppTile(id, app?.name ?: device.favoriteNames[id] ?: id, ecp.iconUrl(device.address, id).toString(), isFavorite = true)
         },
         inputs = apps.filter { it.isTvInput }.map { AppTile(it.id, it.name, null) },
         activeAppId = activeApp?.app?.id,

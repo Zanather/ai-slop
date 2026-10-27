@@ -30,6 +30,9 @@ class FakeRoku(
 
     @Volatile var activeAppId = "12"
 
+    /** How long each keypress takes to answer, after it's recorded: a slow or hung TV. */
+    @Volatile var keyDelayMs = 0L
+
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.url.encodedPath
         val limited = ecpMode == "limited" || rejectKeys
@@ -42,11 +45,13 @@ class FakeRoku(
                     limitedMode()
                 } else {
                     val key = path.removePrefix("/keypress/")
+                    val delayMs = keyDelayMs // Read before the key shows up, so a test can change it once it has.
                     keys += key
                     when (key) {
                         "PowerOff" -> powerMode = "Ready"
                         "PowerOn" -> powerMode = "PowerOn"
                     }
+                    if (delayMs > 0) Thread.sleep(delayMs)
                     MockResponse(code = 200)
                 }
             }

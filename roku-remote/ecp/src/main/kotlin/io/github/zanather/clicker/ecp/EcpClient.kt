@@ -72,6 +72,9 @@ class EcpClient(private val http: OkHttpClient) {
                 parse(xml)
             } catch (e: Exception) {
                 throw EcpException.BadResponse(address, path, e)
+            } catch (e: StackOverflowError) {
+                // Backstop for a pathological document the depth pre-check missed; callers only expect EcpException.
+                throw EcpException.BadResponse(address, path, e)
             }
         }
     }

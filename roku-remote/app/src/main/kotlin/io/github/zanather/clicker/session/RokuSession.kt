@@ -118,10 +118,17 @@ class RokuSession(
 
     @Volatile
     private var foreground = false
+
+    /** Device-info at the saved address came back with another serial: that's someone else's TV now. */
+    @Volatile
+    private var foreignAtAddress = false
     private var connectJob: Job? = null
     private var pollJob: Job? = null
     private var holdJob: Job? = null
-    private var settleJob: Job? = null
+
+    // Separate, so a Home right after Power can't cancel the power-state refresh.
+    private val infoFollowUp = FollowUp { refreshInfo() }
+    private val activeAppFollowUp = FollowUp { refreshActiveApp() }
 
     init {
         scope.launch {
@@ -183,17 +190,27 @@ class RokuSession(
             return
         }
         val resolved = resolvePower(key)
-        queue.offer { send(resolved) }
+        queue.offer {
+            try {
+                send(resolved)
+            } catch (e: EcpException) {
+                // Power the session didn't know was for a sleeping TV (cold start, or state from before): wake it.
+                if (key != RemoteKey.Power || (e !is EcpException.Unreachable && e !is EcpException.Timeout)) throw e
+                queue.discardOffered()
+                wake()
+            }
+        }
     }
 
     /** Finger down on a repeating key: press now, then repeat after [SessionTiming.holdDelay] until [holdEnd]. */
     fun holdStart(key: RokuKey) {
         synchronized(lock) {
             holdJob?.cancel()
+            // The tap itself is queued now, like press(): a quick release can't cancel it or reorder it.
+            queue.offer { send(key) }
             holdJob = scope.launch {
                 val interval = if (key == RemoteKey.VolumeUp || key == RemoteKey.VolumeDown) timing.volumeHoldInterval else timing.holdInterval
                 try {
-                    queue.run { send(key) }
                     delay(timing.holdDelay)
                     while (isActive) {
                         queue.run { send(key) }
@@ -221,13 +238,14 @@ class RokuSession(
     fun launch(appId: String) {
         queue.offer {
             val device = _state.value.device ?: return@offer
+            if (foreignAtAddress) return@offer
             ecp.launch(device.address, appId)
             // Show it as playing now; the next poll confirms what the TV actually opened.
             _state.update { s ->
                 val app = s.apps.firstOrNull { it.id == appId } ?: RokuApp(appId, appId, null, null)
                 s.copy(activeApp = ActiveApp(app, null))
             }
-            settleThen { refreshActiveApp() }
+            activeAppFollowUp.schedule()
         }
     }
 
@@ -237,12 +255,18 @@ class RokuSession(
      */
     suspend fun pressFromOutside(key: RemoteKey): Boolean {
         val device = store.state.first().selected ?: return false
+        // Also checks it's still our TV: after a DHCP shuffle another Roku can answer at the saved address.
+        val info = try {
+            ecp.deviceInfo(device.address)
+        } catch (_: EcpException) {
+            null
+        }
+        if (info != null && info.serialNumber != device.serialNumber) {
+            // Never press keys on someone else's TV. Ours may be asleep elsewhere; the app re-finds it when opened.
+            if (key == RemoteKey.Power) sendWakePackets(device)
+            return false
+        }
         val resolved = if (key == RemoteKey.Power) {
-            val info = try {
-                ecp.deviceInfo(device.address)
-            } catch (_: EcpException) {
-                null
-            }
             if (info == null) {
                 sendWakePackets(device)
                 RemoteKey.PowerOn
@@ -266,6 +290,7 @@ class RokuSession(
 
     private suspend fun send(key: RokuKey) {
         val device = _state.value.device ?: return
+        if (foreignAtAddress) return
         ecp.keypress(device.address, key)
         onKeyAccepted(key)
     }
@@ -287,8 +312,8 @@ class RokuSession(
             scope.launch { refreshApps() }
         }
         when (key) {
-            RemoteKey.PowerOn, RemoteKey.PowerOff, RemoteKey.Power -> settleThen { refreshInfo() }
-            RemoteKey.Home, RemoteKey.Back, RemoteKey.Select -> settleThen { refreshActiveApp() }
+            RemoteKey.PowerOn, RemoteKey.PowerOff, RemoteKey.Power -> infoFollowUp.schedule()
+            RemoteKey.Home, RemoteKey.Back, RemoteKey.Select -> activeAppFollowUp.schedule()
             else -> Unit
         }
     }
@@ -296,7 +321,11 @@ class RokuSession(
     private fun onCommandFailure(e: EcpException) {
         when (e) {
             is EcpException.Forbidden -> _state.update { it.copy(link = Link.Blocked(e.limitedMode)) }
-            is EcpException.Unreachable, is EcpException.Timeout -> connect()
+            is EcpException.Unreachable, is EcpException.Timeout -> {
+                // Presses queued behind this one would each wait out a timeout and land seconds late, if at all.
+                queue.discardOffered()
+                connect()
+            }
             is EcpException.Http, is EcpException.BadResponse -> Unit
         }
     }
@@ -311,7 +340,9 @@ class RokuSession(
             if (connectJob?.isActive == true) return
             val device = _state.value.device ?: return
             connectJob = scope.launch {
-                if (_state.value.link != Link.Connected) _state.update { it.copy(link = Link.Connecting) }
+                // Blocked stays until onInfo shows it's fixed: old firmware doesn't report the mode.
+                val link = _state.value.link
+                if (link != Link.Connected && link !is Link.Blocked) _state.update { it.copy(link = Link.Connecting) }
                 try {
                     onInfo(device, ecp.deviceInfo(device.address))
                 } catch (e: EcpException.Forbidden) {
@@ -333,20 +364,23 @@ class RokuSession(
                 sendWakePackets(device)
                 val start = TimeSource.Monotonic.markNow()
                 while (start.elapsedNow() < timing.wakeTimeout) {
-                    try {
-                        ecp.keypress(device.address, RemoteKey.PowerOn)
-                    } catch (_: EcpException) {
-                        // Expected while it's still asleep.
-                    }
-                    val info = try {
-                        ecp.deviceInfo(device.address)
-                    } catch (_: EcpException) {
-                        null
-                    }
-                    if (info != null) {
-                        onInfo(device, info)
-                        // Blocked TVs ignore PowerOn; the banner explains the fix, so stop retrying.
-                        if (info.powerMode.isScreenOn || _state.value.link is Link.Blocked) return@launch
+                    // Another TV answers at the saved address: don't turn it on. Rediscovery below looks for ours.
+                    if (!foreignAtAddress) {
+                        try {
+                            ecp.keypress(device.address, RemoteKey.PowerOn)
+                        } catch (_: EcpException) {
+                            // Expected while it's still asleep.
+                        }
+                        val info = try {
+                            ecp.deviceInfo(device.address)
+                        } catch (_: EcpException) {
+                            null
+                        }
+                        if (info != null) {
+                            onInfo(device, info)
+                            // Blocked TVs ignore PowerOn; the banner explains the fix, so stop retrying.
+                            if (!foreignAtAddress && (info.powerMode.isScreenOn || _state.value.link is Link.Blocked)) return@launch
+                        }
                     }
                     delay(1.seconds)
                 }
@@ -395,16 +429,22 @@ class RokuSession(
 
     private suspend fun onInfo(device: SavedDevice, info: DeviceInfo) {
         if (info.serialNumber != device.serialNumber) {
-            // Something else now owns this IP; the real TV moved.
+            // Something else now owns this IP; the real TV moved. Until it's found, keys go nowhere.
+            foreignAtAddress = true
             relocate(device)
             return
         }
+        foreignAtAddress = false
         val link = when (info.ecpMode) {
             EcpMode.Limited -> Link.Blocked(limitedMode = true)
             EcpMode.Disabled -> Link.Blocked(limitedMode = false)
             EcpMode.Enabled, EcpMode.Permissive -> Link.Connected
-            // Older firmware doesn't report the mode; only a 403 or an accepted key tells us.
-            EcpMode.Unknown -> _state.value.link as? Link.Blocked ?: Link.Connected
+            // Older firmware doesn't report the mode; only a refused or accepted key tells us. Once one was
+            // refused, ask /query/apps whether that still holds, so "Check again" can't clear it by accident.
+            EcpMode.Unknown -> when (val current = _state.value.link) {
+                is Link.Blocked -> if (current.limitedMode && appsAllowed(device)) Link.Connected else current
+                else -> Link.Connected
+            }
         }
         val wasConnected = _state.value.info != null && _state.value.link == Link.Connected
         _state.update { it.copy(info = info, link = link) }
@@ -457,6 +497,10 @@ class RokuSession(
             pollJob?.cancel()
             holdJob?.cancel()
         }
+        // Presses meant for the old TV or address mustn't land on the new one.
+        queue.discardOffered()
+        // A new address or TV isn't known to be wrong, so keys go out right away.
+        foreignAtAddress = false
         _state.value = SessionState(device = device, link = if (device == null) Link.NoDevice else Link.Connecting)
         // In the background (widget or tile woke the process) stay quiet; onForeground() connects.
         if (device != null && foreground) connect()
@@ -472,6 +516,8 @@ class RokuSession(
         try {
             val apps = ecp.apps(device.address)
             _state.update { it.copy(apps = apps, appsLoading = false, appsError = null) }
+            // Keeps favorite tiles labelled while the TV can't list its channels (asleep, Limited mode).
+            store.rememberFavoriteNames(device.serialNumber, apps.associate { it.id to it.name })
         } catch (_: EcpException.Forbidden) {
             _state.update { it.copy(appsLoading = false, appsError = AppsError.Blocked) }
         } catch (_: EcpException) {
@@ -500,13 +546,25 @@ class RokuSession(
         }
     }
 
-    /** Runs [block] once the TV has had a moment to react, replacing any pending follow-up. */
-    private fun settleThen(block: suspend () -> Unit) {
-        synchronized(lock) {
-            settleJob?.cancel()
-            settleJob = scope.launch {
-                delay(timing.settleDelay)
-                block()
+    /** Limited mode refuses `/query/apps` as well as keys, so this asks whether keys work without pressing one. */
+    private suspend fun appsAllowed(device: SavedDevice): Boolean = try {
+        ecp.apps(device.address)
+        true
+    } catch (_: EcpException) {
+        false
+    }
+
+    /** A query run once the TV has had a moment to react. Scheduling again replaces the pending run. */
+    private inner class FollowUp(private val query: suspend () -> Unit) {
+        private var job: Job? = null
+
+        fun schedule() {
+            synchronized(lock) {
+                job?.cancel()
+                job = scope.launch {
+                    delay(timing.settleDelay)
+                    query()
+                }
             }
         }
     }

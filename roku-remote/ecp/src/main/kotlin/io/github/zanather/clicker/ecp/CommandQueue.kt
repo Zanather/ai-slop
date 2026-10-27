@@ -7,6 +7,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Runs commands for one TV strictly one at a time, in submission order, on [scope].
@@ -24,7 +25,10 @@ class CommandQueue(
     private val onFailure: (EcpException) -> Unit,
 ) {
     /** [done] is null for [offer]ed commands, which nobody waits for. */
-    private class Entry(val command: suspend () -> Unit, val done: CompletableDeferred<Unit>?)
+    private class Entry(val command: suspend () -> Unit, val done: CompletableDeferred<Unit>?, val generation: Long)
+
+    /** Bumped by [discardOffered]; offered entries from an older generation are skipped. */
+    private val generation = AtomicLong()
 
     init {
         require(capacity >= 0) { "capacity must not be negative: $capacity" }
@@ -45,7 +49,15 @@ class CommandQueue(
      * A command that throws something other than [EcpException] or [CancellationException] is a bug:
      * it fails the queue's coroutine in [scope], which also closes the queue.
      */
-    fun offer(command: suspend () -> Unit): Boolean = channel.trySend(Entry(command, null)).isSuccess
+    fun offer(command: suspend () -> Unit): Boolean = channel.trySend(Entry(command, null, generation.get())).isSuccess
+
+    /**
+     * Skips every [offer]ed command still waiting to run, e.g. once the link fails, so presses don't land
+     * seconds late. [run] callers are unaffected: they're waiting, so their command still runs.
+     */
+    fun discardOffered() {
+        generation.incrementAndGet()
+    }
 
     /**
      * Enqueues and suspends until the command has run, behind anything already queued.
@@ -60,7 +72,7 @@ class CommandQueue(
         val done = CompletableDeferred<Unit>()
         try {
             // close() cancels the channel, so a closed queue fails this send with CancellationException.
-            channel.send(Entry(command, done))
+            channel.send(Entry(command, done, generation.get()))
             done.await()
         } catch (e: CancellationException) {
             // Marks the entry as skipped if the consumer hasn't reached it yet; no-op once it has run.
@@ -78,6 +90,7 @@ class CommandQueue(
     private suspend fun process(entry: Entry) {
         val done = entry.done
         if (done != null && done.isCompleted) return // Its run() caller gave up before it started.
+        if (done == null && entry.generation != generation.get()) return // Discarded.
         try {
             entry.command()
             done?.complete(Unit)
