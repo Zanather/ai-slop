@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Only paints the window before Compose draws, so launch doesn't flash a mismatched color. -->
+    <style name="Theme.Clicker" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
+    </style>
+
+    <color name="window_background">#FFFBF7</color>
+</resources>

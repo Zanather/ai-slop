@@ -37,6 +37,31 @@ updates:
           - tsx
           - typedoc
 
+  - package-ecosystem: gradle
+    directory: /roku-remote
+    schedule:
+      interval: monthly
+      timezone: America/Toronto
+    commit-message:
+      prefix: "⬆️ "
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      android:
+        patterns:
+          - androidx.*
+          - com.android.*
+          - org.jetbrains.kotlin*
+          - org.jetbrains.kotlinx*
+      testing:
+        patterns:
+          - io.github.takahirom.roborazzi*
+          - junit*
+          - org.robolectric*
+          - com.google.truth*
+
   - package-ecosystem: github-actions
     directory: /
     schedule:

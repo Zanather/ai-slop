@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Top bar -->
+    <string name="remote_device_none">No TV yet</string>
+    <string name="remote_device_fallback">your TV</string>
+    <string name="remote_choose_tv">Choose TV</string>
+    <string name="remote_status_connected">Connected</string>
+    <string name="remote_status_connecting">Connecting…</string>
+    <string name="remote_status_searching">Searching…</string>
+    <string name="remote_status_waking">Waking up…</string>
+    <string name="remote_status_tv_off">Screen off</string>
+    <string name="remote_status_unreachable">Not responding</string>
+    <string name="remote_status_blocked">Blocked by TV</string>
+    <string name="remote_status_no_device">Tap to choose</string>
+    <string name="remote_action_keyboard">Keyboard</string>
+    <string name="remote_action_channels">Channels</string>
+    <string name="remote_action_settings">Settings</string>
+
+    <!-- Keys: content descriptions are the action a press performs. -->
+    <string name="remote_key_power">Power</string>
+    <string name="remote_key_up">Up</string>
+    <string name="remote_key_down">Down</string>
+    <string name="remote_key_left">Left</string>
+    <string name="remote_key_right">Right</string>
+    <string name="remote_key_ok">OK</string>
+    <string name="remote_key_back">Back</string>
+    <string name="remote_key_home">Home</string>
+    <string name="remote_key_options">Options</string>
+    <string name="remote_key_replay">Replay</string>
+    <string name="remote_key_rewind">Rewind</string>
+    <string name="remote_key_play_pause">Play or pause</string>
+    <string name="remote_key_fast_forward">Fast forward</string>
+    <string name="remote_key_volume_up">Volume up</string>
+    <string name="remote_key_volume_down">Volume down</string>
+    <string name="remote_key_mute">Mute</string>
+    <string name="remote_key_channel_up">Channel up</string>
+    <string name="remote_key_channel_down">Channel down</string>
+    <string name="remote_volume_label">VOL</string>
+    <string name="remote_channel_label">CH</string>
+
+    <!-- Inputs -->
+    <string name="remote_input">Input</string>
+    <string name="remote_input_tuner">Antenna/Live TV</string>
+    <string name="remote_input_hdmi">HDMI %1$d</string>
+    <string name="remote_input_av">AV</string>
+    <string name="remote_input_active">Showing now</string>
+
+    <!-- Favorites -->
+    <string name="remote_favorites_all">All</string>
+    <string name="remote_favorites_all_description">All channels</string>
+    <string name="remote_favorite_open">Open</string>
+    <string name="remote_favorite_playing">Showing now</string>
+
+    <!-- Touchpad -->
+    <string name="remote_mode_touchpad">Touchpad mode</string>
+    <string name="remote_touchpad_hint">Swipe to move · Tap for OK</string>
+    <string name="remote_touchpad_description">Touchpad. Swipe to move, tap for OK.</string>
+
+    <!-- Status banners -->
+    <string name="remote_searching_title">Looking for %1$s…</string>
+    <string name="remote_searching_body">Its address may have changed.</string>
+    <string name="remote_waking_title">Waking %1$s…</string>
+    <string name="remote_waking_body">This can take up to 20 seconds.</string>
+    <string name="remote_tv_off_title">%1$s is off</string>
+    <string name="remote_turn_on">Turn on</string>
+    <string name="remote_unreachable_title">Can\'t reach %1$s</string>
+    <string name="remote_unreachable_tip_wifi">Is it on the same Wi-Fi as your phone?</string>
+    <string name="remote_unreachable_tip_fast_start">Turn on Fast TV start on the TV (Settings &gt; System &gt; Power) so your phone can wake it.</string>
+    <string name="remote_wake_tv">Wake TV</string>
+    <string name="remote_try_again">Try again</string>
+    <string name="remote_blocked_limited_title">Your TV is blocking remote apps</string>
+    <string name="remote_blocked_limited_body">Roku TVs ship with phone control set to Limited. One-time fix on the TV:</string>
+    <string-array name="remote_blocked_steps">
+        <item>Home</item>
+        <item>Settings</item>
+        <item>System</item>
+        <item>Advanced system settings</item>
+        <item>Control by mobile apps</item>
+        <item>Network access</item>
+        <item>Enabled</item>
+    </string-array>
+    <string name="remote_blocked_steps_description">On the TV, go to Home, Settings, System, Advanced system settings, Control by mobile apps, Network access, and choose Enabled.</string>
+    <string name="remote_blocked_enabled_note">Enabled is enough; you don\'t need Permissive.</string>
+    <string name="remote_blocked_official_app_note">No remote handy? The official Roku app can still get you there.</string>
+    <string name="remote_blocked_refused_title">Your TV refused the connection</string>
+    <string name="remote_blocked_refused_body">On the TV, check Control by mobile apps isn\'t Disabled, and that your phone is on the same Wi-Fi as the TV (not a guest network or VPN).</string>
+    <string name="remote_check_again">Check again</string>
+    <string name="remote_show_steps">Show steps</string>
+    <string name="remote_hide_steps">Hide steps</string>
+
+    <!-- No TV yet -->
+    <string name="remote_find_title">Let\'s find your TV</string>
+    <string name="remote_find_body">Make sure your phone is on the same Wi-Fi as your TV.</string>
+    <string name="remote_find_action">Find my TV</string>
+
+    <!-- Keyboard sheet -->
+    <string name="remote_keyboard_title">Keyboard</string>
+    <string name="remote_keyboard_field">Type on your TV</string>
+    <string name="remote_keyboard_backspace">Backspace</string>
+    <string name="remote_keyboard_clear">Clear</string>
+    <string name="remote_keyboard_enter">Enter</string>
+    <string name="remote_keyboard_hint">Some apps, like YouTube and Prime Video, use their own keyboards and may ignore typing.</string>
+</resources>

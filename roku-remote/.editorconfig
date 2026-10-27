@@ -1,0 +1,4 @@
+# Kotlin and Android XML follow their ecosystem's 4-space convention instead of the repo-wide tabs.
+[*.{kt,kts,xml,toml,properties,pro}]
+indent_style = space
+indent_size = 4

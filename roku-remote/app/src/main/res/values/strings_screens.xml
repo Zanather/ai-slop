@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Strings for the Channels, Your TVs, TV details and Settings screens. -->
+<resources>
+    <string name="screens_back">Back</string>
+    <string name="screens_try_again">Try again</string>
+    <string name="screens_expanded">Expanded</string>
+    <string name="screens_collapsed">Collapsed</string>
+
+    <!-- Channels -->
+    <string name="apps_title">Channels</string>
+    <string name="apps_refresh">Refresh channels</string>
+    <string name="apps_hint">Tap to open. Long-press to pin to the remote.</string>
+    <string name="apps_loading">Getting your channels…</string>
+    <string name="apps_error_title">Can\'t show your channels</string>
+    <string name="apps_empty_title">No channels yet</string>
+    <string name="apps_empty_body">Channels you add on the TV will show up here.</string>
+    <string name="apps_now_playing">Now playing</string>
+    <string name="apps_pinned">Pinned to remote</string>
+    <string name="apps_pin">Pin to remote</string>
+    <string name="apps_unpin">Unpin from remote</string>
+    <string name="apps_open">Open</string>
+
+    <!-- Your TVs -->
+    <string name="devices_title">Your TVs</string>
+    <string name="devices_saved">Saved</string>
+    <string name="devices_found">Found on your network</string>
+    <string name="devices_searching">Searching your Wi-Fi…</string>
+    <string name="devices_scan_again">Scan again</string>
+    <string name="devices_none_found">No other TVs answered.</string>
+    <string name="devices_controlling">Controlling</string>
+    <string name="devices_control">Control this TV</string>
+    <string name="devices_details">TV details</string>
+    <string name="devices_more">More options</string>
+    <string name="devices_forget">Forget</string>
+    <string name="devices_add">Add</string>
+    <string name="devices_kind_tv">Roku TV</string>
+    <string name="devices_kind_player">Streaming player</string>
+    <string name="devices_add_by_ip">Add by IP address</string>
+    <string name="devices_ip_label">IP address</string>
+    <string name="devices_ip_placeholder">192.168.1.20</string>
+    <string name="devices_ip_help">Find it on the TV: Settings > Network > About</string>
+    <string name="devices_empty_title">No TVs yet</string>
+    <string name="devices_empty_body">Make sure your phone is on the same Wi-Fi as the TV, then scan again. You can also add it by IP address below.</string>
+
+    <!-- TV details -->
+    <string name="info_title_fallback">TV details</string>
+    <string name="info_loading">Asking the TV…</string>
+    <string name="info_error_title">Can\'t read TV details</string>
+    <string name="info_no_details">The TV didn\'t report anything about itself.</string>
+    <string name="info_all_fields">All fields</string>
+    <plurals name="info_all_fields_count">
+        <item quantity="one">%1$d field the TV reports</item>
+        <item quantity="other">%1$d fields the TV reports</item>
+    </plurals>
+    <string name="info_show_all">Show all fields</string>
+    <string name="info_hide_all">Hide all fields</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_section_remote">Remote</string>
+    <string name="settings_section_appearance">Appearance</string>
+    <string name="settings_section_help">Help</string>
+    <string name="settings_section_about">About</string>
+    <string name="settings_haptics">Haptic feedback</string>
+    <string name="settings_haptics_body">Buzz on every button press</string>
+    <string name="settings_volume_keys">Phone volume buttons</string>
+    <string name="settings_volume_keys_body">Change TV volume with your phone\'s buttons while Clicker is open</string>
+    <string name="settings_keep_screen_on">Keep screen on</string>
+    <string name="settings_keep_screen_on_body">While the remote is open</string>
+    <string name="settings_dynamic_color">Match wallpaper colors</string>
+    <string name="settings_dynamic_color_body">Use Material You colors from your wallpaper</string>
+    <string name="settings_help_title">Remote not working?</string>
+    <string name="settings_help_body">Two settings on the TV fix most problems.</string>
+    <string name="settings_help_step_access_title">Let Clicker control the TV</string>
+    <string name="settings_help_step_access_path">On the TV: Home > Settings > System > Advanced system settings > Control by mobile apps > Network access > %1$s</string>
+    <string name="settings_help_step_access_target">Enabled</string>
+    <string name="settings_help_step_power_title">Let Clicker turn the TV on</string>
+    <string name="settings_help_step_power_body">Turn on Fast TV start (Settings > System > Power) so the remote can turn the TV on.</string>
+    <string name="settings_show_help">Show help</string>
+    <string name="settings_hide_help">Hide help</string>
+    <string name="settings_version">Version %1$s</string>
+    <string name="settings_about_body">A remote for your Roku TV</string>
+</resources>

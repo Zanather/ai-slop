@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Clicker</string>
+    <string name="tile_play_pause">Play/Pause</string>
+    <string name="widget_description">Power, volume and play/pause for your Roku TV</string>
+    <string name="widget_power">Power</string>
+    <string name="widget_volume_down">Volume down</string>
+    <string name="widget_mute">Mute</string>
+    <string name="widget_volume_up">Volume up</string>
+    <string name="widget_play_pause">Play or pause</string>
+    <string name="widget_no_tv">Open Clicker to pick a TV</string>
+    <string name="crash_title">Clicker crashed</string>
+    <string name="crash_body">Sorry about that. Copy this report and send it to whoever builds your Clicker; it says exactly what went wrong.</string>
+    <string name="crash_copy">Copy</string>
+    <string name="crash_share">Share</string>
+    <string name="crash_continue">Open Clicker</string>
+    <string name="crash_copied">Report copied</string>
+    <string name="crash_log_title">Clicker log</string>
+    <string name="crash_log_body">No crash recorded. This is what Clicker did recently; copy it and send it along if something isn\'t working.</string>
+    <string name="crash_log_launcher">Clicker log</string>
+</resources>
