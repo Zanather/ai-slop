@@ -9,6 +9,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -45,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.min
 import io.github.zanather.clicker.R
 import io.github.zanather.clicker.ecp.RemoteKey
 import io.github.zanather.clicker.ui.model.RemoteActions
@@ -88,6 +90,14 @@ private fun partAt(position: Offset, size: IntSize, okRadius: Float): DPadPart? 
  */
 @Composable
 internal fun DPad(actions: RemoteActions, size: Dp, modifier: Modifier = Modifier) {
+    // A parent that squeezes one side gets a smaller disc, centered, so what's drawn is always what's hit.
+    BoxWithConstraints(modifier.size(size), contentAlignment = Alignment.Center) {
+        DPadDisc(actions, min(maxWidth, maxHeight))
+    }
+}
+
+@Composable
+private fun DPadDisc(actions: RemoteActions, size: Dp) {
     val haptics by rememberUpdatedState(rememberKeyHaptics())
     val currentActions by rememberUpdatedState(actions)
     var pressed by remember { mutableStateOf<DPadPart?>(null) }
@@ -105,7 +115,7 @@ internal fun DPad(actions: RemoteActions, size: Dp, modifier: Modifier = Modifie
     }
 
     Box(
-        modifier = modifier
+        modifier = Modifier
             .size(size)
             .semantics { isTraversalGroup = true }
             .pointerInput(size) {

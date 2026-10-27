@@ -1,64 +1,35 @@
 package io.github.zanather.clicker.ui.remote
 
+import android.view.View
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertHasClickAction
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
+import androidx.compose.ui.unit.DpRect
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.width
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.common.truth.Truth.assertThat
-import io.github.zanather.clicker.ecp.RokuKey
 import io.github.zanather.clicker.ui.model.ConnectionStatus
-import io.github.zanather.clicker.ui.model.RemoteActions
 import io.github.zanather.clicker.ui.model.RemoteUiState
 import io.github.zanather.clicker.ui.theme.ClickerTheme
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.annotation.Config
-
-/** Records every call, in order, as "name argument". */
-private class RecordingActions : RemoteActions {
-    val calls = mutableListOf<String>()
-
-    override fun press(key: RokuKey) {
-        calls += "press ${key.ecpName}"
-    }
-
-    override fun holdStart(key: RokuKey) {
-        calls += "holdStart ${key.ecpName}"
-    }
-
-    override fun holdEnd(key: RokuKey) {
-        calls += "holdEnd ${key.ecpName}"
-    }
-
-    override fun launch(appId: String) {
-        calls += "launch $appId"
-    }
-
-    override fun sendKeys(keys: List<RokuKey>) {
-        calls += "sendKeys ${keys.joinToString(",") { it.ecpName }}"
-    }
-
-    override fun wake() {
-        calls += "wake"
-    }
-
-    override fun retry() {
-        calls += "retry"
-    }
-
-    override fun setTouchpadMode(enabled: Boolean) {
-        calls += "setTouchpadMode $enabled"
-    }
-}
 
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "w411dp-h891dp-xxhdpi")
@@ -68,9 +39,11 @@ class RemoteScreenInteractionTest {
 
     private val actions = RecordingActions()
     private val opened = mutableListOf<String>()
+    private lateinit var view: View
 
     private fun show(state: RemoteUiState = RemoteSamples.connectedTv) {
         compose.setContent {
+            view = LocalView.current
             ClickerTheme {
                 RemoteScreen(
                     state = state,
@@ -82,6 +55,8 @@ class RemoteScreenInteractionTest {
             }
         }
     }
+
+    private fun bounds(description: String): DpRect = compose.onNodeWithContentDescription(description).getBoundsInRoot()
 
     private fun tap(description: String) {
         compose.onNodeWithContentDescription(description).performClick()
@@ -344,5 +319,56 @@ class RemoteScreenInteractionTest {
     fun touchpadModeHidesTheDPad() {
         show(RemoteSamples.connectedTv.copy(touchpadMode = true))
         compose.onNodeWithContentDescription("Up").assertDoesNotExist()
+    }
+
+    @Test
+    @Config(qualifiers = "w360dp-h780dp-xxhdpi")
+    fun touchpadStaysOutOfTheBackGestureEdges() {
+        show(RemoteSamples.connectedTv.copy(touchpadMode = true))
+        val edge = with(compose.density) { 30.dp.roundToPx() }
+        compose.runOnIdle {
+            val insets = WindowInsetsCompat.Builder()
+                .setInsets(WindowInsetsCompat.Type.systemGestures(), Insets.of(edge, 0, edge, 0))
+                .build()
+            ViewCompat.dispatchApplyWindowInsets(view, insets)
+        }
+        compose.waitForIdle()
+
+        val pad = bounds("Touchpad. Swipe to move, tap for OK.")
+        val screen = compose.onRoot().getBoundsInRoot()
+        assertThat(pad.left.value).isAtLeast(30f)
+        assertThat((screen.right - pad.right).value).isAtLeast(30f)
+    }
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-land-xxhdpi")
+    fun shortLandscapePhoneKeepsTheDPadRound() {
+        show()
+        val up = bounds("Up")
+        val down = bounds("Down")
+        val left = bounds("Left")
+        val right = bounds("Right")
+        assertThat((down.bottom - up.top).value).isWithin(0.5f).of((right.right - left.left).value)
+
+        for (arm in listOf("Up", "Down", "Left", "Right")) {
+            compose.onNodeWithContentDescription(arm).performTouchInput {
+                down(center)
+                up()
+            }
+        }
+        compose.waitForIdle()
+        assertThat(actions.calls.filter { it.startsWith("holdStart") })
+            .containsExactly("holdStart Up", "holdStart Down", "holdStart Left", "holdStart Right")
+            .inOrder()
+    }
+
+    @Test
+    @Config(qualifiers = "w640dp-h360dp-land-xxhdpi")
+    fun shortLandscapePhoneKeepsPlaybackKeysRound() {
+        show()
+        for (key in listOf("Replay", "Rewind", "Play or pause", "Fast forward")) {
+            val bounds = bounds(key)
+            assertThat(bounds.width.value).isWithin(0.5f).of(bounds.height.value)
+        }
     }
 }

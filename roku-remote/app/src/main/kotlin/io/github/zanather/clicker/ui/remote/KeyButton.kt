@@ -175,6 +175,7 @@ internal fun pressedColor(pressed: Boolean, colors: KeyColors): Color =
  * where a double tap sends one press.
  *
  * [onActivate] runs on every activation, touch or accessibility; [onPressedChange] tracks the finger.
+ * With [sendsKey] false the button sends nothing itself and [onActivate] does the sending.
  */
 @Composable
 internal fun KeyButton(
@@ -184,6 +185,7 @@ internal fun KeyButton(
     modifier: Modifier = Modifier,
     shape: Shape = CircleShape,
     colors: KeyColors = KeyDefaults.tonal(),
+    sendsKey: Boolean = true,
     onActivate: () -> Unit = {},
     onPressedChange: (Boolean) -> Unit = {},
     content: @Composable () -> Unit,
@@ -199,11 +201,11 @@ internal fun KeyButton(
     Box(
         modifier = modifier
             .minimumInteractiveComponentSize()
-            .pointerInput(key) {
+            .pointerInput(key, sendsKey) {
                 awaitEachGesture {
                     val down = awaitFirstDown()
                     currentOnActivate()
-                    trackKeyTouch(down, key, currentActions, haptics) {
+                    trackKeyTouch(down, key, if (sendsKey) currentActions else RemoteActions.Noop, haptics) {
                         pressed = it
                         currentOnPressedChange(it)
                     }
@@ -213,7 +215,7 @@ internal fun KeyButton(
                 role = Role.Button
                 contentDescription = label
                 onClick {
-                    currentActions.press(key)
+                    if (sendsKey) currentActions.press(key)
                     currentOnActivate()
                     true
                 }

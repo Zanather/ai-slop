@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.systemGestures
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -39,8 +40,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.max
@@ -55,6 +59,12 @@ import io.github.zanather.clicker.ui.model.RemoteUiState
 private val ScreenPadding = 16.dp
 private val MaxPadSize = 260.dp
 private val MinPadSize = 196.dp
+
+/** Floor for a landscape pad squeezed by a narrow half; below it the pad overflows rather than shrink further. */
+private val MinLandscapePadSize = 140.dp
+
+/** Between the nav keys and the pad in landscape. */
+private val LandscapeGap = 28.dp
 
 /** Height of everything in portrait other than the pad, so the pad shrinks before anything scrolls. */
 private val PortraitReserved = 480.dp
@@ -102,7 +112,7 @@ fun RemoteScreen(
                             .heightIn(min = maxHeight)
                             .padding(vertical = 24.dp),
                     )
-                    maxWidth > maxHeight -> LandscapeRemote(state, actions, touchExploration, onOpenApps, onOpenDevices, maxHeight)
+                    maxWidth > maxHeight -> LandscapeRemote(state, actions, touchExploration, onOpenApps, onOpenDevices, maxWidth, maxHeight)
                     else -> PortraitRemote(state, actions, touchExploration, onOpenApps, onOpenDevices, maxWidth, maxHeight)
                 }
             }
@@ -125,6 +135,10 @@ private fun PortraitRemote(
     height: Dp,
 ) {
     val padSize = (height - PortraitReserved).coerceIn(MinPadSize, max(MinPadSize, min(MaxPadSize, width - 2 * ScreenPadding)))
+    // The swipe pad stays out of the edge-swipe back zones, which would take its sideways swipes.
+    val gestures = WindowInsets.systemGestures
+    val direction = LocalLayoutDirection.current
+    val gestureInset = with(LocalDensity.current) { maxOf(gestures.getLeft(this, direction), gestures.getRight(this, direction)).toDp() }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -155,7 +169,7 @@ private fun PortraitRemote(
             verticalArrangement = Arrangement.spacedBy(24.dp),
         ) {
             NavKeyRow(actions, width = max(padSize, 240.dp))
-            Pad(state.touchpadMode && !touchExploration, actions, padSize, width - 2 * ScreenPadding)
+            Pad(state.touchpadMode && !touchExploration, actions, padSize, width - 2 * max(ScreenPadding, gestureInset))
         }
         BottomKeys(state, actions)
     }
@@ -168,9 +182,12 @@ private fun LandscapeRemote(
     touchExploration: Boolean,
     onOpenApps: () -> Unit,
     onOpenDevices: () -> Unit,
+    width: Dp,
     height: Dp,
 ) {
-    val padSize = (height - 32.dp).coerceIn(MinPadSize, MaxPadSize)
+    // On short phones the half's width, not the height, is what limits the pad.
+    val padRoom = width / 2 - 2 * ScreenPadding - NavKeySize - LandscapeGap
+    val padSize = min((height - 32.dp).coerceIn(MinPadSize, MaxPadSize), padRoom).coerceAtLeast(MinLandscapePadSize)
     Row(Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier
@@ -179,11 +196,11 @@ private fun LandscapeRemote(
                 .verticalScroll(rememberScrollState())
                 .heightIn(min = height)
                 .padding(ScreenPadding),
-            horizontalArrangement = Arrangement.spacedBy(28.dp, Alignment.CenterHorizontally),
+            horizontalArrangement = Arrangement.spacedBy(LandscapeGap, Alignment.CenterHorizontally),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             NavKeyColumn(actions)
-            Pad(state.touchpadMode && !touchExploration, actions, padSize, padSize * 1.3f)
+            Pad(state.touchpadMode && !touchExploration, actions, padSize, max(padSize, min(padSize * 1.3f, padRoom)))
         }
         Column(
             modifier = Modifier

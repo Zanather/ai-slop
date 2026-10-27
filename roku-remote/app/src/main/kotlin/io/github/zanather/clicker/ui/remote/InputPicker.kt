@@ -79,6 +79,7 @@ internal fun InputButton(inputs: List<AppTile>, activeAppId: String?, actions: R
             shape = RoundedCornerShape(20.dp),
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
+            ForwardVolumeKeysFromThisWindow()
             if (inputs.isNotEmpty()) {
                 for (input in inputs) {
                     InputItem(input.name, iconForInput(input.id), isActive = input.id == activeAppId) {

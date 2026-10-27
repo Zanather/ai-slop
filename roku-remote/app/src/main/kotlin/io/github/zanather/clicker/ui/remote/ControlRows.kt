@@ -4,6 +4,7 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -48,13 +49,16 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.coerceIn
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.times
 import io.github.zanather.clicker.R
 import io.github.zanather.clicker.ecp.RemoteKey
 import io.github.zanather.clicker.ui.model.RemoteActions
 
-private val NavKeySize = 64.dp
+internal val NavKeySize = 64.dp
 private val PlaybackKeySize = 64.dp
+private val PlaybackKeyGap = 16.dp
 private val RockerHeight = 60.dp
 
 /** Play and pause in one glyph, matching the widget's; Material has no combined icon. */
@@ -104,11 +108,15 @@ internal fun NavKeyColumn(actions: RemoteActions, modifier: Modifier = Modifier)
 @Composable
 internal fun PlaybackRow(actions: RemoteActions, modifier: Modifier = Modifier) {
     Ltr {
-        Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconKey(RemoteKey.InstantReplay, R.string.remote_key_replay, Icons.Rounded.Replay, actions, PlaybackKeySize)
-            IconKey(RemoteKey.Rev, R.string.remote_key_rewind, Icons.Rounded.FastRewind, actions, PlaybackKeySize)
-            IconKey(RemoteKey.Play, R.string.remote_key_play_pause, PlayPauseIcon, actions, PlaybackKeySize, KeyDefaults.accent())
-            IconKey(RemoteKey.Fwd, R.string.remote_key_fast_forward, Icons.Rounded.FastForward, actions, PlaybackKeySize)
+        BoxWithConstraints(modifier) {
+            // In a narrow column (landscape on a small phone) the keys shrink together instead of squeezing the last one.
+            val size = ((maxWidth - 3 * PlaybackKeyGap) / 4).coerceIn(48.dp, PlaybackKeySize)
+            Row(horizontalArrangement = Arrangement.spacedBy(PlaybackKeyGap), verticalAlignment = Alignment.CenterVertically) {
+                IconKey(RemoteKey.InstantReplay, R.string.remote_key_replay, Icons.Rounded.Replay, actions, size)
+                IconKey(RemoteKey.Rev, R.string.remote_key_rewind, Icons.Rounded.FastRewind, actions, size)
+                IconKey(RemoteKey.Play, R.string.remote_key_play_pause, PlayPauseIcon, actions, size, KeyDefaults.accent())
+                IconKey(RemoteKey.Fwd, R.string.remote_key_fast_forward, Icons.Rounded.FastForward, actions, size)
+            }
         }
     }
 }

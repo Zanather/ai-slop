@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import io.github.zanather.clicker.R
 import io.github.zanather.clicker.ui.components.groupedItem
 import io.github.zanather.clicker.ui.model.DeviceRow
+import io.github.zanather.clicker.ui.remote.ForwardVolumeKeysFromThisWindow
 
 /** A remembered TV: tap to control it, info for its details, overflow to forget it. */
 @Composable
@@ -206,6 +207,7 @@ private fun ForgetMenu(onForget: () -> Unit) {
             shape = RoundedCornerShape(16.dp),
             containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
         ) {
+            ForwardVolumeKeysFromThisWindow()
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.devices_forget)) },
                 leadingIcon = { Icon(Icons.Rounded.DeleteOutline, contentDescription = null) },

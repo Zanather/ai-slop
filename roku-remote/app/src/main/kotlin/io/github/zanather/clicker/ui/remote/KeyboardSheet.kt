@@ -46,7 +46,7 @@ import io.github.zanather.clicker.ecp.keysForEdit
 import io.github.zanather.clicker.ui.model.RemoteActions
 import kotlinx.coroutines.delay
 
-/** Local mirror of the session's Backspace repeat (400 ms, then about every 90 ms plus a round trip). */
+/** Held Backspace repeats here, not in the session, so the TV deletes exactly what the field does. */
 private const val BACKSPACE_REPEAT_DELAY_MS = 400L
 private const val BACKSPACE_REPEAT_INTERVAL_MS = 110L
 
@@ -67,7 +67,12 @@ internal fun KeyboardSheet(actions: RemoteActions, onDismiss: () -> Unit) {
     var backspaceHeld by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
 
-    fun trimOne() {
+    // Every key the sheet sends takes the typing path, so it can't overtake letters from an edit still being sent.
+    fun send(key: RemoteKey) = actions.sendKeys(listOf(key))
+
+    // Sent even with an empty field, so a tap can still delete text that was on the TV before.
+    fun backspace() {
+        send(RemoteKey.Backspace)
         sent = sent.dropLastCodePoint()
         text = sent
     }
@@ -75,8 +80,9 @@ internal fun KeyboardSheet(actions: RemoteActions, onDismiss: () -> Unit) {
     LaunchedEffect(backspaceHeld) {
         if (!backspaceHeld) return@LaunchedEffect
         delay(BACKSPACE_REPEAT_DELAY_MS)
+        // Stops at an empty field, so a slow TV is never left working through repeats after release.
         while (sent.isNotEmpty()) {
-            trimOne()
+            backspace()
             delay(BACKSPACE_REPEAT_INTERVAL_MS)
         }
     }
@@ -86,7 +92,8 @@ internal fun KeyboardSheet(actions: RemoteActions, onDismiss: () -> Unit) {
         sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
-        // In here, not above: the sheet is its own window, with its own field to focus and its own IME.
+        // In here, not above: the sheet is its own window, with its own field to focus, its own IME and its own keys.
+        ForwardVolumeKeysFromThisWindow()
         val keyboard = LocalSoftwareKeyboardController.current
         LaunchedEffect(Unit) {
             focusRequester.requestFocus()
@@ -111,7 +118,7 @@ internal fun KeyboardSheet(actions: RemoteActions, onDismiss: () -> Unit) {
                 singleLine = true,
                 shape = RoundedCornerShape(16.dp),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { actions.press(RemoteKey.Enter) }),
+                keyboardActions = KeyboardActions(onSend = { send(RemoteKey.Enter) }),
                 modifier = Modifier
                     .fillMaxWidth()
                     .focusRequester(focusRequester),
@@ -123,7 +130,8 @@ internal fun KeyboardSheet(actions: RemoteActions, onDismiss: () -> Unit) {
                     actions = actions,
                     shape = RoundedCornerShape(16.dp),
                     colors = KeyDefaults.secondary(),
-                    onActivate = ::trimOne,
+                    sendsKey = false,
+                    onActivate = ::backspace,
                     onPressedChange = { backspaceHeld = it },
                     modifier = Modifier.size(width = 72.dp, height = 52.dp),
                 ) {
@@ -148,6 +156,8 @@ internal fun KeyboardSheet(actions: RemoteActions, onDismiss: () -> Unit) {
                     actions = actions,
                     shape = RoundedCornerShape(16.dp),
                     colors = KeyDefaults.accent(),
+                    sendsKey = false,
+                    onActivate = { send(RemoteKey.Enter) },
                     modifier = Modifier.height(52.dp),
                 ) {
                     Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
