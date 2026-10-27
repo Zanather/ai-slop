@@ -27,7 +27,7 @@ class CrashLogTest {
 
     @Test
     fun aRecordedCrashSendsTheNextLaunchToTheReport() {
-        CrashLog.record(app, IllegalStateException("boom"))
+        CrashLog.record(IllegalStateException("boom"))
 
         ActivityScenario.launch(MainActivity::class.java)
 
@@ -37,7 +37,7 @@ class CrashLogTest {
 
     @Test
     fun theReportShowsTheTraceAndDeviceDetails() {
-        CrashLog.record(app, IllegalStateException("boom"))
+        CrashLog.record(IllegalStateException("boom"))
 
         ActivityScenario.launch(CrashActivity::class.java).onActivity { activity ->
             val texts = mutableListOf<String>()

@@ -38,6 +38,19 @@
             android:name=".crash.CrashActivity"
             android:exported="false" />
 
+        <!-- A second launcher icon that opens the crash/log screen even when the remote won't stay open. -->
+        <activity-alias
+            android:name=".crash.LogLauncher"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/crash_log_launcher"
+            android:targetActivity=".crash.CrashActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+
         <service
             android:name=".tile.PlayPauseTileService"
             android:exported="true"

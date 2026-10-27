@@ -19,25 +19,32 @@ import io.github.zanather.clicker.MainActivity
 import io.github.zanather.clicker.R
 
 /**
- * Shows the last crash with buttons to copy or share it. Plain platform views on purpose: whatever crashed may
- * be in Compose or the app's own wiring, so this screen depends on neither.
+ * Shows the last crash (if any) and the recent lifecycle trail, with buttons to copy or share them. Opened after
+ * a crash, or from the "Clicker log" launcher icon when the app misbehaves without crashing. Plain platform views
+ * on purpose: whatever went wrong may be in Compose or the app's own wiring, so this screen depends on neither.
  */
 class CrashActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val report = CrashLog.read(this) ?: run {
-            relaunch()
-            return
+        CrashLog.breadcrumb("CrashActivity shown")
+        val crash = CrashLog.read(this)
+        val report = buildString {
+            if (crash != null) {
+                appendLine(crash)
+                appendLine()
+            }
+            appendLine("Recent activity:")
+            append(CrashLog.trail(this@CrashActivity).lines().takeLast(TRAIL_LINES).joinToString("\n"))
         }
         val pad = dp(16)
 
         val title = TextView(this).apply {
-            setText(R.string.crash_title)
+            setText(if (crash != null) R.string.crash_title else R.string.crash_log_title)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
             setTypeface(typeface, Typeface.BOLD)
         }
         val body = TextView(this).apply {
-            setText(R.string.crash_body)
+            setText(if (crash != null) R.string.crash_body else R.string.crash_log_body)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
             setPadding(0, dp(8), 0, dp(8))
         }
@@ -45,10 +52,10 @@ class CrashActivity : Activity() {
             orientation = LinearLayout.HORIZONTAL
             addView(button(R.string.crash_copy) { copy(report) })
             addView(button(R.string.crash_share) { share(report) })
-            addView(button(R.string.crash_continue) { relaunch() })
+            addView(button(R.string.crash_continue) { openApp() })
         }
-        val trace = TextView(this).apply {
-            text = report
+        val text = TextView(this).apply {
+            this.text = report
             typeface = Typeface.MONOSPACE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
             setTextIsSelectable(true)
@@ -61,7 +68,7 @@ class CrashActivity : Activity() {
             addView(title)
             addView(body)
             addView(buttons)
-            addView(HorizontalScrollView(context).apply { addView(trace) })
+            addView(HorizontalScrollView(context).apply { addView(text) })
         }
         setContentView(ScrollView(this).apply {
             fitsSystemWindows = true
@@ -70,7 +77,7 @@ class CrashActivity : Activity() {
     }
 
     private fun copy(report: String) {
-        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Clicker crash", report))
+        getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Clicker report", report))
         Toast.makeText(this, R.string.crash_copied, Toast.LENGTH_SHORT).show()
     }
 
@@ -79,7 +86,7 @@ class CrashActivity : Activity() {
         startActivity(Intent.createChooser(send, getString(R.string.crash_share)))
     }
 
-    private fun relaunch() {
+    private fun openApp() {
         CrashLog.clear(this)
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK or Intent.FLAG_ACTIVITY_NEW_TASK))
         finish()
@@ -91,4 +98,8 @@ class CrashActivity : Activity() {
     }
 
     private fun dp(value: Int) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
+
+    private companion object {
+        const val TRAIL_LINES = 120
+    }
 }

@@ -33,6 +33,7 @@ class MainActivity : ComponentActivity() {
     private var lastVolumeRepeat = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        CrashLog.breadcrumb("main onCreate restored=${savedInstanceState != null} action=${intent?.action}")
         if (CrashLog.read(this) != null) {
             // The last run crashed: show the report instead of walking into the same crash.
             super.onCreate(savedInstanceState)
@@ -67,12 +68,34 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
+        CrashLog.breadcrumb("main onStart")
         container.session.onForeground()
     }
 
+    override fun onResume() {
+        super.onResume()
+        CrashLog.breadcrumb("main onResume")
+    }
+
+    override fun onPause() {
+        CrashLog.breadcrumb("main onPause finishing=$isFinishing")
+        super.onPause()
+    }
+
     override fun onStop() {
+        CrashLog.breadcrumb("main onStop finishing=$isFinishing config=$isChangingConfigurations")
         container.session.onBackground()
         super.onStop()
+    }
+
+    override fun onDestroy() {
+        CrashLog.breadcrumb("main onDestroy finishing=$isFinishing config=$isChangingConfigurations")
+        super.onDestroy()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        CrashLog.breadcrumb("main focus=$hasFocus")
     }
 
     /**

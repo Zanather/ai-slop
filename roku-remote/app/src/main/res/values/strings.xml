@@ -13,6 +13,9 @@
     <string name="crash_body">Sorry about that. Copy this report and send it to whoever builds your Clicker; it says exactly what went wrong.</string>
     <string name="crash_copy">Copy</string>
     <string name="crash_share">Share</string>
-    <string name="crash_continue">Try again</string>
-    <string name="crash_copied">Crash report copied</string>
+    <string name="crash_continue">Open Clicker</string>
+    <string name="crash_copied">Report copied</string>
+    <string name="crash_log_title">Clicker log</string>
+    <string name="crash_log_body">No crash recorded. This is what Clicker did recently; copy it and send it along if something isn\'t working.</string>
+    <string name="crash_log_launcher">Clicker log</string>
 </resources>

@@ -34,15 +34,21 @@ class ClickerApp : Application(), SingletonImageLoader.Factory {
     val container: AppContainer
         get() = checkNotNull(started) { "App failed to start; the crash report has the cause" }
 
+    // Earliest hook an app gets: runs before content providers, so crashes in library initializers are caught too.
+    override fun attachBaseContext(base: Context) {
+        super.attachBaseContext(base)
+        CrashLog.install(base)
+    }
+
     override fun onCreate() {
         super.onCreate()
-        CrashLog.install(this)
+        CrashLog.breadcrumb("app onCreate")
         // If startup itself throws, keep the process alive so MainActivity can show the report,
         // rather than dying the same way on every launch.
         started = try {
-            AppContainer(this)
+            AppContainer(this).also { CrashLog.breadcrumb("app ready") }
         } catch (e: Exception) {
-            CrashLog.record(this, e)
+            CrashLog.record(e)
             null
         }
     }
