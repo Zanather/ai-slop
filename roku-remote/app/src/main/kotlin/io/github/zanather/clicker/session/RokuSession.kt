@@ -124,7 +124,10 @@ class RokuSession(
     private var foreignAtAddress = false
     private var connectJob: Job? = null
     private var pollJob: Job? = null
-    private var holdJob: Job? = null
+
+    // One for volume too, so the phone's volume buttons and a finger on the D-pad can't end each other's hold.
+    private val hold = HoldSlot(timing.holdInterval)
+    private val volumeHold = HoldSlot(timing.volumeHoldInterval)
 
     // Separate, so a Home right after Power can't cancel the power-state refresh.
     private val infoFollowUp = FollowUp { refreshInfo() }
@@ -174,7 +177,8 @@ class RokuSession(
         synchronized(lock) {
             foreground = false
             pollJob?.cancel()
-            holdJob?.cancel()
+            hold.cancel()
+            volumeHold.cancel()
             if (_state.value.link == Link.Searching || _state.value.link == Link.Connecting) connectJob?.cancel()
         }
     }
@@ -193,42 +197,25 @@ class RokuSession(
         queue.offer {
             try {
                 send(resolved)
-            } catch (e: EcpException) {
+            } catch (e: EcpException.Unreachable) {
                 // Power the session didn't know was for a sleeping TV (cold start, or state from before): wake it.
-                if (key != RemoteKey.Power || (e !is EcpException.Unreachable && e !is EcpException.Timeout)) throw e
+                // Not on a Timeout: that TV got the request, so it's awake and may have taken the key.
+                val device = _state.value.device
+                // A failure at an old address goes on to onCommandFailure, which ignores it.
+                if (key != RemoteKey.Power || device == null || e.address != device.address) throw e
                 queue.discardOffered()
-                wake()
+                // A connect still running may be about to find the TV elsewhere; wake() would cancel it.
+                if (synchronized(lock) { connectJob?.isActive == true }) scope.launch { sendWakePackets(device) } else wake()
             }
         }
     }
 
     /** Finger down on a repeating key: press now, then repeat after [SessionTiming.holdDelay] until [holdEnd]. */
-    fun holdStart(key: RokuKey) {
-        synchronized(lock) {
-            holdJob?.cancel()
-            // The tap itself is queued now, like press(): a quick release can't cancel it or reorder it.
-            queue.offer { send(key) }
-            holdJob = scope.launch {
-                val interval = if (key == RemoteKey.VolumeUp || key == RemoteKey.VolumeDown) timing.volumeHoldInterval else timing.holdInterval
-                try {
-                    delay(timing.holdDelay)
-                    while (isActive) {
-                        queue.run { send(key) }
-                        delay(interval)
-                    }
-                } catch (_: EcpException) {
-                    // Already reported through onCommandFailure; stop repeating into a dead link.
-                }
-            }
-        }
-    }
+    fun holdStart(key: RokuKey) = holdSlot(key).start(key)
 
-    fun holdEnd(@Suppress("UNUSED_PARAMETER") key: RokuKey) {
-        synchronized(lock) {
-            holdJob?.cancel()
-            holdJob = null
-        }
-    }
+    fun holdEnd(key: RokuKey) = holdSlot(key).end(key)
+
+    private fun holdSlot(key: RokuKey) = if (key == RemoteKey.VolumeUp || key == RemoteKey.VolumeDown) volumeHold else hold
 
     /** Keyboard keys: never dropped, always in order, paced for on-screen keyboards. */
     fun sendKeys(keys: List<RokuKey>) {
@@ -321,13 +308,18 @@ class RokuSession(
     private fun onCommandFailure(e: EcpException) {
         when (e) {
             is EcpException.Forbidden -> _state.update { it.copy(link = Link.Blocked(e.limitedMode)) }
-            is EcpException.Unreachable, is EcpException.Timeout -> {
-                // Presses queued behind this one would each wait out a timeout and land seconds late, if at all.
-                queue.discardOffered()
-                connect()
-            }
+            is EcpException.Unreachable -> onLinkFailure(e.address)
+            is EcpException.Timeout -> onLinkFailure(e.address)
             is EcpException.Http, is EcpException.BadResponse -> Unit
         }
+    }
+
+    private fun onLinkFailure(address: RokuAddress) {
+        // The TV has moved since; onDeviceChanged already dropped the presses meant for the old address.
+        if (address != _state.value.device?.address) return
+        // Presses queued behind this one would each wait out a timeout and land seconds late, if at all.
+        queue.discardOffered()
+        connect()
     }
 
     // endregion
@@ -417,7 +409,8 @@ class RokuSession(
 
     /** The TV stopped answering at its saved address. Find it by serial and save the new address. */
     private suspend fun relocate(device: SavedDevice) {
-        _state.update { it.copy(link = Link.Searching) }
+        // Blocked stays, as in connect(): old firmware only reports it through a refused key.
+        _state.update { if (it.link is Link.Blocked) it else it.copy(link = Link.Searching) }
         val found = discover(exhaustive = true).firstOrNull { it.info.serialNumber == device.serialNumber }
         when {
             found == null -> _state.update { it.copy(link = Link.Unreachable) }
@@ -495,7 +488,8 @@ class RokuSession(
         synchronized(lock) {
             connectJob?.cancel()
             pollJob?.cancel()
-            holdJob?.cancel()
+            hold.cancel()
+            volumeHold.cancel()
         }
         // Presses meant for the old TV or address mustn't land on the new one.
         queue.discardOffered()
@@ -552,6 +546,47 @@ class RokuSession(
         true
     } catch (_: EcpException) {
         false
+    }
+
+    /** One repeating key at a time: a new hold replaces the one before it. */
+    private inner class HoldSlot(private val interval: Duration) {
+        private var held: RokuKey? = null
+        private var job: Job? = null
+
+        fun start(key: RokuKey) {
+            synchronized(lock) {
+                job?.cancel()
+                // The tap itself is queued now, like press(): a quick release can't cancel it or reorder it.
+                queue.offer { send(key) }
+                held = key
+                job = scope.launch {
+                    try {
+                        delay(timing.holdDelay)
+                        while (isActive) {
+                            queue.run { send(key) }
+                            delay(interval)
+                        }
+                    } catch (_: EcpException) {
+                        // Already reported through onCommandFailure; stop repeating into a dead link.
+                    }
+                }
+            }
+        }
+
+        /** Finger up on [key]. A hold another key has since taken over keeps going. */
+        fun end(key: RokuKey) {
+            synchronized(lock) {
+                if (key == held) cancel()
+            }
+        }
+
+        fun cancel() {
+            synchronized(lock) {
+                job?.cancel()
+                job = null
+                held = null
+            }
+        }
     }
 
     /** A query run once the TV has had a moment to react. Scheduling again replaces the pending run. */

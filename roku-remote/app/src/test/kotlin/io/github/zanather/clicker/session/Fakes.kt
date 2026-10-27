@@ -14,6 +14,8 @@ import java.net.SocketTimeoutException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 
 /** A Roku TV good enough to drive the session: device-info, apps, active-app, keys and launch. */
 class FakeRoku(
@@ -33,11 +35,20 @@ class FakeRoku(
     /** How long each keypress takes to answer, after it's recorded: a slow or hung TV. */
     @Volatile var keyDelayMs = 0L
 
+    /** Device-info requests received, failed ones included. */
+    val deviceInfoRequests = AtomicInteger()
+
+    /** Answers this many device-info requests with a 503, like a short Wi-Fi drop. */
+    val deviceInfoFailures = AtomicInteger()
+
     override fun dispatch(request: RecordedRequest): MockResponse {
         val path = request.url.encodedPath
         val limited = ecpMode == "limited" || rejectKeys
         return when {
-            path == "/query/device-info" -> xml(deviceInfo())
+            path == "/query/device-info" -> {
+                deviceInfoRequests.incrementAndGet()
+                if (deviceInfoFailures.getAndUpdate { maxOf(it - 1, 0) } > 0) MockResponse(code = 503) else xml(deviceInfo())
+            }
             path == "/query/apps" -> if (limited) limitedMode() else xml(APPS)
             path == "/query/active-app" -> xml("<active-app>${APP_XML.getValue(activeAppId)}</active-app>")
             path.startsWith("/keypress/") && request.method == "POST" -> {
@@ -107,6 +118,8 @@ class FakeRoku(
 class FakeLan(
     private val ssdpReplies: List<String> = emptyList(),
     private val lanAddress: LanAddress? = null,
+    /** How long the replies take after an M-SEARCH, like Roku's MX back-off. */
+    private val ssdpDelayMs: Long = 0,
 ) : Lan {
     val sent = CopyOnWriteArrayList<DatagramPacket>()
 
@@ -124,7 +137,15 @@ class FakeLan(
 
         override fun send(p: DatagramPacket) {
             sent += DatagramPacket(p.data.copyOfRange(p.offset, p.offset + p.length), p.length, p.socketAddress)
-            if (String(p.data, p.offset, p.length).startsWith("M-SEARCH")) inbox.addAll(ssdpReplies)
+            if (!String(p.data, p.offset, p.length).startsWith("M-SEARCH")) return
+            if (ssdpDelayMs == 0L) {
+                inbox.addAll(ssdpReplies)
+            } else {
+                thread(isDaemon = true) {
+                    Thread.sleep(ssdpDelayMs)
+                    inbox.addAll(ssdpReplies)
+                }
+            }
         }
 
         override fun receive(p: DatagramPacket) {

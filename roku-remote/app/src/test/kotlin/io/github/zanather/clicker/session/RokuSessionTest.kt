@@ -24,6 +24,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.net.InetAddress
+import java.net.ServerSocket
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
@@ -135,6 +137,24 @@ class RokuSessionTest {
     }
 
     @Test
+    fun searchingWhileBlockedOnOlderFirmwareKeepsTheBlockedBanner() = runBlocking<Unit> {
+        roku.ecpMode = null
+        roku.rejectKeys = true
+        val lan = FakeLan(ssdpReplies = listOf(ssdpReply(server.port, roku.serial)))
+        val session = connected(lan = lan)
+        session.press(RemoteKey.Home)
+        session.awaitState { it.link == Link.Blocked(limitedMode = true) }
+
+        val before = roku.deviceInfoRequests.get()
+        roku.deviceInfoFailures.set(2) // A Wi-Fi blip: a poll and connect()'s retry both fail, so it searches.
+        // SSDP finds the TV at the same address and reads its device-info. Polling resumes once that's handled.
+        withTimeout(5.seconds) { while (roku.deviceInfoRequests.get() < before + 5) delay(10) }
+
+        assertThat(lan.sent.any { String(it.data, 0, it.length).startsWith("M-SEARCH") }).isTrue()
+        assertThat(session.state.value.link).isEqualTo(Link.Blocked(limitedMode = true))
+    }
+
+    @Test
     fun keysGoOutBeforeTheFirstConnectFinishes() = runBlocking<Unit> {
         saveTv()
         val session = session() // In the background, so nothing has probed the TV.
@@ -185,6 +205,38 @@ class RokuSessionTest {
     }
 
     @Test
+    fun aVolumeHoldAndADPadHoldDontEndEachOther() = runBlocking<Unit> {
+        val session = connected()
+
+        session.holdStart(RemoteKey.Down) // A finger on the D-pad.
+        session.holdStart(RemoteKey.VolumeUp) // The phone's volume button, held meanwhile.
+        delay(400)
+        session.holdEnd(RemoteKey.VolumeUp)
+        delay(100)
+        val volumeUps = roku.keys.count { it == "VolumeUp" }
+        val downs = roku.keys.count { it == "Down" }
+        delay(300)
+        session.holdEnd(RemoteKey.Down)
+
+        assertThat(volumeUps).isAtLeast(3)
+        assertThat(roku.keys.count { it == "VolumeUp" }).isEqualTo(volumeUps)
+        assertThat(roku.keys.count { it == "Down" }).isGreaterThan(downs)
+    }
+
+    @Test
+    fun releasingAKeyWhoseHoldWasTakenOverDoesntEndTheNewHold() = runBlocking<Unit> {
+        val session = connected()
+
+        session.holdStart(RemoteKey.Up)
+        session.holdStart(RemoteKey.Down) // A second finger takes over.
+        session.holdEnd(RemoteKey.Up) // The first one lifts.
+        delay(400)
+        session.holdEnd(RemoteKey.Down)
+
+        assertThat(roku.keys.count { it == "Down" }).isAtLeast(3)
+    }
+
+    @Test
     fun quickTapsOnARepeatingKeyAreNeverDroppedBehindASlowPress() = runBlocking<Unit> {
         val session = connected()
         roku.keyDelayMs = 200
@@ -214,6 +266,23 @@ class RokuSessionTest {
         delay(3_500)
 
         assertThat(roku.keys).containsExactly("Down")
+    }
+
+    @Test
+    fun aFailureAtTheOldAddressDoesntDropAPressMadeAtTheNewOne() = runBlocking<Unit> {
+        // The old address accepts connections but never answers, so requests there time out.
+        ServerSocket(0, 50, InetAddress.getByName("127.0.0.1")).use { old ->
+            saveTv(port = old.localPort)
+            val session = session(FakeLan(ssdpReplies = listOf(ssdpReply(server.port, roku.serial))))
+            session.onForeground() // Its device-info times out at 2.5 s; then SSDP finds the TV at the new address.
+            delay(1_000)
+            session.press(RemoteKey.Down) // Times out at the old address at about 3.5 s.
+
+            session.awaitState { it.link == Link.Connected && it.device?.port == server.port }
+            session.press(RemoteKey.Select) // Queued behind Down.
+
+            withTimeout(4.seconds) { while ("Select" !in roku.keys) delay(10) }
+        }
     }
 
     @Test
@@ -357,6 +426,34 @@ class RokuSessionTest {
     }
 
     @Test
+    fun aPowerOffTheTvTookButAnsweredLateIsntUndoneByAWakeUp() = runBlocking<Unit> {
+        val session = connected()
+        roku.keyDelayMs = 3_000 // Takes the key, then answers after the read timeout.
+
+        session.press(RemoteKey.Power)
+        awaitKeys(1)
+        roku.keyDelayMs = 0
+        delay(4_000)
+
+        assertThat(roku.keys).containsExactly("PowerOff")
+    }
+
+    @Test
+    fun powerDuringTheFirstConnectDoesntStallFindingTheTvAtItsNewAddress() = runBlocking<Unit> {
+        saveTv(port = deadPort()) // The router gave the TV a new IP.
+        // The SSDP reply comes after the Power tap has failed at the old address.
+        val lan = FakeLan(ssdpReplies = listOf(ssdpReply(server.port, roku.serial)), ssdpDelayMs = 400)
+        val session = session(lan, timing.copy(wakeTimeout = 20.seconds))
+        session.awaitState { it.device != null }
+
+        session.onForeground()
+        session.press(RemoteKey.Power)
+
+        session.awaitState { it.link == Link.Connected && it.device?.port == server.port }
+        assertThat(lan.sent.filter { it.length == 102 }).isNotEmpty() // In case it's asleep there.
+    }
+
+    @Test
     fun widgetPressWorksWithoutTheAppInTheForeground() = runBlocking<Unit> {
         saveTv()
         val session = session()
@@ -417,9 +514,9 @@ class RokuSessionTest {
     private fun session(lan: Lan = FakeLan(), timing: SessionTiming = this.timing) =
         RokuSession(scope, EcpClient(EcpClient.defaultHttpClient()), store, lan, timing)
 
-    private suspend fun connected(timing: SessionTiming = this.timing): RokuSession {
+    private suspend fun connected(timing: SessionTiming = this.timing, lan: Lan = FakeLan()): RokuSession {
         saveTv()
-        return session(timing = timing).also {
+        return session(lan, timing).also {
             it.onForeground()
             it.awaitState { s -> s.info != null && s.link != Link.Connecting }
         }
