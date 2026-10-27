@@ -454,6 +454,33 @@ class RokuSessionTest {
     }
 
     @Test
+    fun powerRightAfterOpeningTheAppTurnsOnATvInDeepSleep() = powerRightAfterOpeningTurnsOn(foundBySsdp = false)
+
+    @Test
+    fun powerRightAfterOpeningTheAppTurnsOnATvThatWokeUpDark() = powerRightAfterOpeningTurnsOn(foundBySsdp = true)
+
+    /** Deep sleep: nothing answers at the saved address until the magic packet wakes the TV's network. */
+    private fun powerRightAfterOpeningTurnsOn(foundBySsdp: Boolean) = runBlocking<Unit> {
+        val port = deadPort()
+        saveTv(port = port)
+        val replies = if (foundBySsdp) listOf(ssdpReply(port, roku.serial)) else emptyList()
+        val lan = FakeLan(ssdpReplies = replies, ssdpDelayMs = 300)
+        val session = session(lan, timing.copy(wakeTimeout = 5.seconds))
+        session.awaitState { it.device != null }
+
+        session.onForeground()
+        session.press(RemoteKey.Power) // Still Connecting, so the session doesn't know the TV's state yet.
+
+        withTimeout(3.seconds) { while (lan.sent.none { it.length == 102 }) delay(10) }
+        val woken = FakeRoku(powerMode = "Ready") // Network up, screen still dark.
+        MockWebServer().use { tv ->
+            tv.dispatcher = woken
+            tv.start(port)
+            withTimeout(6.seconds) { while ("PowerOn" !in woken.keys) delay(10) }
+        }
+    }
+
+    @Test
     fun widgetPressWorksWithoutTheAppInTheForeground() = runBlocking<Unit> {
         saveTv()
         val session = session()

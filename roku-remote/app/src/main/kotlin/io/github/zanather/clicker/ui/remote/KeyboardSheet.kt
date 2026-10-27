@@ -44,9 +44,10 @@ import io.github.zanather.clicker.R
 import io.github.zanather.clicker.ecp.RemoteKey
 import io.github.zanather.clicker.ecp.keysForEdit
 import io.github.zanather.clicker.ui.model.RemoteActions
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.delay
 
-/** Held Backspace repeats here, not in the session, so the TV deletes in step with the field. */
+/** Held Backspace repeats here while the field has text, so the TV deletes in step with it. */
 private const val BACKSPACE_REPEAT_DELAY_MS = 400L
 private const val BACKSPACE_REPEAT_INTERVAL_MS = 110L
 
@@ -80,10 +81,17 @@ internal fun KeyboardSheet(actions: RemoteActions, onDismiss: () -> Unit) {
     LaunchedEffect(backspaceHeld) {
         if (!backspaceHeld) return@LaunchedEffect
         delay(BACKSPACE_REPEAT_DELAY_MS)
-        // Goes on past an empty field: the TV may still hold text from before the sheet opened.
-        while (true) {
+        while (sent.isNotEmpty()) {
             backspace()
             delay(BACKSPACE_REPEAT_INTERVAL_MS)
+        }
+        // Past an empty field the TV may still hold text from before the sheet opened. The session repeats
+        // that at the TV's own pace, so no backlog is left to land after the finger lifts.
+        actions.holdStart(RemoteKey.Backspace)
+        try {
+            awaitCancellation()
+        } finally {
+            actions.holdEnd(RemoteKey.Backspace)
         }
     }
 

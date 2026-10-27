@@ -105,8 +105,10 @@ class KeyboardSheetTest {
         holdBackspace(2_000)
 
         assertThat(fieldText()).isEmpty()
-        assertThat(actions.calls.size).isGreaterThan(2)
-        assertThat(actions.calls.toSet()).containsExactly("sendKeys Backspace")
+        // The field's two, then the session repeats at the TV's pace until release.
+        assertThat(actions.calls)
+            .containsExactly("sendKeys Backspace", "sendKeys Backspace", "holdStart Backspace", "holdEnd Backspace")
+            .inOrder()
     }
 
     @Test
@@ -116,8 +118,7 @@ class KeyboardSheetTest {
         actions.calls.clear()
         holdBackspace(2_000)
 
-        assertThat(actions.calls.size).isGreaterThan(1)
-        assertThat(actions.calls.toSet()).containsExactly("sendKeys Backspace")
+        assertThat(actions.calls).containsExactly("sendKeys Backspace", "holdStart Backspace", "holdEnd Backspace").inOrder()
     }
 
     @Test

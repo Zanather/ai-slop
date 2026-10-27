@@ -204,8 +204,20 @@ class RokuSession(
                 // A failure at an old address goes on to onCommandFailure, which ignores it.
                 if (key != RemoteKey.Power || device == null || e.address != device.address) throw e
                 queue.discardOffered()
-                // A connect still running may be about to find the TV elsewhere; wake() would cancel it.
-                if (synchronized(lock) { connectJob?.isActive == true }) scope.launch { sendWakePackets(device) } else wake()
+                val running = synchronized(lock) { connectJob?.takeIf { it.isActive } }
+                if (running == null) {
+                    wake()
+                } else {
+                    // A connect still running may be about to find the TV elsewhere; wake() would cancel it.
+                    scope.launch {
+                        sendWakePackets(device)
+                        running.join()
+                        // Not found, or found where it was but dark: finish what Power asked for.
+                        val s = _state.value
+                        val dark = s.info?.let { !it.powerMode.isScreenOn } == true
+                        if (s.device?.address == device.address && (s.link == Link.Unreachable || dark)) wake()
+                    }
+                }
             }
         }
     }
