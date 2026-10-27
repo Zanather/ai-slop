@@ -97,6 +97,52 @@ class AppLaunchTest {
         compose.waitUntilAtLeastOneExists(hasText("C148X"), timeoutMillis = 10_000)
     }
 
+    // A screen fades in and out over 700 ms. A tap while it fades in counts; a second tap while it fades out doesn't.
+
+    @Test
+    fun backTappedWhileSettingsFadesInGoesBack() = tapBackOnSettings(afterMs = 300)
+
+    @Test
+    fun backTappedOnceSettingsHasFadedInGoesBack() = tapBackOnSettings(afterMs = 1_000)
+
+    private fun tapBackOnSettings(afterMs: Long) {
+        forgetAllTvs()
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithContentDescription("Settings").performClick()
+        compose.mainClock.advanceTimeBy(afterMs)
+        compose.onNodeWithContentDescription("Back").performClick()
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+        compose.onNodeWithText("Keep screen on").assertDoesNotExist()
+        compose.onNodeWithText("Find my TV").assertIsDisplayed()
+    }
+
+    @Test
+    fun aChannelTappedWhileChannelsFadesInLaunchesIt() = tapAChannel(afterMs = 300)
+
+    @Test
+    fun aChannelTappedLateInChannelsFadeLaunchesIt() = tapAChannel(afterMs = 550)
+
+    @Test
+    fun aChannelTappedOnceChannelsHasFadedInLaunchesIt() = tapAChannel(afterMs = 1_000)
+
+    private fun tapAChannel(afterMs: Long) {
+        selectTheFakeTv()
+        // Loaded beforehand, so the grid is there the moment Channels opens.
+        compose.waitUntil(timeoutMillis = 10_000) { compose.activity.container.session.state.value.apps.isNotEmpty() }
+        compose.waitForIdle()
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithContentDescription("Channels").performClick()
+        compose.mainClock.advanceTimeBy(afterMs)
+        compose.onAllNodesWithText("YouTube").onFirst().performClick()
+        compose.mainClock.autoAdvance = true
+        compose.waitUntil(timeoutMillis = 5_000) { roku.launches.isNotEmpty() }
+        compose.waitForIdle()
+        assertThat(roku.launches).containsExactly("837")
+        compose.onNodeWithContentDescription("Channels").assertIsDisplayed()
+    }
+
     @Test
     fun doubleTappingBackLandsOnTheRemote() {
         forgetAllTvs()

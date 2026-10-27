@@ -21,7 +21,7 @@ import org.robolectric.annotation.Config
 
 /**
  * The sheet's own keys must queue behind typed text (the session only orders [RecordingActions.sendKeys]
- * calls against each other), and a held Backspace must delete as much on the TV as in the field.
+ * calls against each other), and a held Backspace must delete as much on the TV as in the field, then keep going.
  */
 @RunWith(AndroidJUnit4::class)
 @Config(qualifiers = "w411dp-h891dp-xxhdpi")
@@ -51,6 +51,15 @@ class KeyboardSheetTest {
 
     private fun fieldText(): String =
         field.fetchSemanticsNode().config.getOrNull(SemanticsProperties.EditableText)?.text.orEmpty()
+
+    private fun holdBackspace(millis: Long) {
+        compose.mainClock.autoAdvance = false
+        compose.onNodeWithContentDescription("Backspace").performTouchInput { down(center) }
+        compose.mainClock.advanceTimeBy(millis)
+        compose.onNodeWithContentDescription("Backspace").performTouchInput { up() }
+        compose.mainClock.autoAdvance = true
+        compose.waitForIdle()
+    }
 
     @Test
     fun enterAndSendQueueBehindTheTyping() {
@@ -82,12 +91,7 @@ class KeyboardSheetTest {
     fun heldBackspaceDeletesExactlyWhatTheFieldLoses() {
         openSheet()
         type("hello world")
-        compose.mainClock.autoAdvance = false
-        compose.onNodeWithContentDescription("Backspace").performTouchInput { down(center) }
-        compose.mainClock.advanceTimeBy(1_000)
-        compose.onNodeWithContentDescription("Backspace").performTouchInput { up() }
-        compose.mainClock.autoAdvance = true
-        compose.waitForIdle()
+        holdBackspace(1_000)
 
         val deleted = "hello world".length - fieldText().length
         assertThat(deleted).isGreaterThan(3)
@@ -95,18 +99,25 @@ class KeyboardSheetTest {
     }
 
     @Test
-    fun heldBackspaceStopsAtAnEmptyField() {
+    fun heldBackspaceKeepsDeletingOnTheTvPastAnEmptyField() {
         openSheet()
         type("ab")
-        compose.mainClock.autoAdvance = false
-        compose.onNodeWithContentDescription("Backspace").performTouchInput { down(center) }
-        compose.mainClock.advanceTimeBy(2_000)
-        compose.onNodeWithContentDescription("Backspace").performTouchInput { up() }
-        compose.mainClock.autoAdvance = true
-        compose.waitForIdle()
+        holdBackspace(2_000)
 
         assertThat(fieldText()).isEmpty()
-        assertThat(actions.calls).containsExactly("sendKeys Backspace", "sendKeys Backspace")
+        assertThat(actions.calls.size).isGreaterThan(2)
+        assertThat(actions.calls.toSet()).containsExactly("sendKeys Backspace")
+    }
+
+    @Test
+    fun heldBackspaceOnAFreshSheetDeletesTextTheTvStillHas() {
+        // The sheet opens empty, but the TV's search box often still holds an earlier query.
+        openSheet()
+        actions.calls.clear()
+        holdBackspace(2_000)
+
+        assertThat(actions.calls.size).isGreaterThan(1)
+        assertThat(actions.calls.toSet()).containsExactly("sendKeys Backspace")
     }
 
     @Test

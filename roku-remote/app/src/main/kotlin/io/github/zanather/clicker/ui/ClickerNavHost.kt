@@ -3,9 +3,8 @@ package io.github.zanather.clicker.ui
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.compose.dropUnlessResumed
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -34,11 +33,15 @@ internal data object SettingsRoute
 
 /**
  * The remote is home; everything else is one level deep. A screen on its way out is still drawn and
- * tappable, so its back and launch taps only count while it's resumed: a double tap can't pop the remote.
+ * tappable, so its back and launch taps only count while it's on top: a double tap can't pop the remote.
  */
 @Composable
 fun ClickerNavHost(viewModel: ClickerViewModel) {
     val nav = rememberNavController()
+
+    // Not the lifecycle: a screen fading in stays STARTED for the whole fade, but is on top, and tappable, at once.
+    fun NavBackStackEntry.isOnTop() = nav.currentBackStackEntry?.id == id
+
     NavHost(navController = nav, startDestination = RemoteRoute) {
         composable<RemoteRoute> {
             val state by viewModel.remote.collectAsStateWithLifecycle()
@@ -55,17 +58,17 @@ fun ClickerNavHost(viewModel: ClickerViewModel) {
             AppsScreen(
                 state = state,
                 onLaunch = { appId ->
-                    if (entry.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
+                    if (entry.isOnTop()) {
                         viewModel.launch(appId)
                         nav.popBackStack(RemoteRoute, inclusive = false)
                     }
                 },
                 onToggleFavorite = viewModel::toggleFavorite,
                 onRefresh = viewModel::refreshApps,
-                onBack = dropUnlessResumed { nav.popBackStack() },
+                onBack = { if (entry.isOnTop()) nav.popBackStack() },
             )
         }
-        composable<DevicesRoute> {
+        composable<DevicesRoute> { entry ->
             val state by viewModel.devices.collectAsStateWithLifecycle()
             LaunchedEffect(Unit) { viewModel.scan() }
             DevicesScreen(
@@ -78,21 +81,21 @@ fun ClickerNavHost(viewModel: ClickerViewModel) {
                 onShowInfo = { row -> nav.navigate(InfoRoute(row.serialNumber)) },
                 onScan = viewModel::scan,
                 onAddByAddress = viewModel::addByAddress,
-                onBack = dropUnlessResumed { nav.popBackStack() },
+                onBack = { if (entry.isOnTop()) nav.popBackStack() },
             )
         }
         composable<InfoRoute> { entry ->
             val serial = entry.toRoute<InfoRoute>().serialNumber
             val state by viewModel.info.collectAsStateWithLifecycle()
             LaunchedEffect(serial) { viewModel.loadInfo(serial) }
-            DeviceInfoScreen(state = state, onBack = dropUnlessResumed { nav.popBackStack() })
+            DeviceInfoScreen(state = state, onBack = { if (entry.isOnTop()) nav.popBackStack() })
         }
-        composable<SettingsRoute> {
+        composable<SettingsRoute> { entry ->
             val state by viewModel.settingsUi.collectAsStateWithLifecycle()
             SettingsScreen(
                 state = state,
                 onChange = viewModel::updateSettings,
-                onBack = dropUnlessResumed { nav.popBackStack() },
+                onBack = { if (entry.isOnTop()) nav.popBackStack() },
             )
         }
     }
