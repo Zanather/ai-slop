@@ -15,8 +15,8 @@ android {
         // Not 37 yet: targeting Android 17 makes LAN access a runtime "Nearby devices" permission, and a
         // denied prompt would leave the remote dead. At 36 the permission is granted with INTERNET.
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.0.3"
+        versionCode = 5
+        versionName = "1.0.4"
     }
 
     signingConfigs {
@@ -84,6 +84,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.compose)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.navigation.compose)
+    // Glance alone pulls WorkManager 2.7.1 (2021), whose Room keep rules AGP 9's R8 no longer honors.
+    implementation(libs.androidx.work.runtime)
     implementation(libs.coil.compose)
     implementation(libs.coil.network.okhttp)
     implementation(libs.kotlinx.coroutines.android)
